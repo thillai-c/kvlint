@@ -85,6 +85,7 @@ class VLLMBlockSimulator:
         # Insertion order is LRU order: least recently used first. Values are the
         # id of the request that first created the block.
         self._cache: OrderedDict[bytes, str] = OrderedDict()
+        self._seen_any_request = False
         self.evictions = 0
 
     def config(self) -> dict[str, Any]:
@@ -105,6 +106,8 @@ class VLLMBlockSimulator:
             if digest not in self._cache:
                 break
             hits += 1
+
+        nearest_prior = self._cache[digests[hits - 1]] if hits else None
 
         # Insert or touch. Touching keeps the original writer id: we want to
         # know who created the block, not who last reused it.
@@ -129,8 +132,18 @@ class VLLMBlockSimulator:
                 del self._cache[oldest]
                 self.evictions += 1
 
+        # A first request cannot have diverged from anything, and a full hit has
+        # no divergence point either.
+        divergence: int | None = None
+        if self._seen_any_request and hits < len(digests):
+            divergence = hits * self.block_size
+
+        self._seen_any_request = True
+
         return PerRequestResult(
             request_id=request_id,
             prompt_tokens=len(token_ids),
             cached_tokens=hits * self.block_size,
+            divergence_token_idx=divergence,
+            nearest_prior_request_id=nearest_prior,
         )
