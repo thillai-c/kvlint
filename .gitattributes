@@ -1,0 +1,13 @@
+# Default: let git normalize line endings in text files.
+* text=auto eol=lf
+
+# Test fixtures and golden files must survive byte-for-byte.
+#
+# The `whitespace_drift` lint rule (KVLINT_BUILD_PLAN.md §5.4) exists precisely to
+# detect `\r\n` vs `\n` drift, so its fixtures deliberately contain CRLF. Any
+# autocrlf normalization would silently rewrite the bytes and neuter the tests
+# that prove the rule works. Same reasoning for rendered-template golden files:
+# they must match what the tokenizer produced, exactly.
+tests/fixtures/** -text
+tests/golden/** -text
+*.jsonl -text
