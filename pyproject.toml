@@ -28,6 +28,9 @@ dependencies = [
     "pydantic>=2.0",
     "transformers>=4.40",
     "tokenizers>=0.19",
+    # transformers does not require jinja2, but apply_chat_template does and it is
+    # on our critical path for every chat-format log.
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -84,8 +87,12 @@ warn_unreachable = true
 files = ["kvlint"]
 
 [[tool.mypy.overrides]]
-module = ["transformers.*", "tokenizers.*", "plotly.*"]
+module = ["transformers.*", "tokenizers.*", "plotly.*", "numpy.*"]
 ignore_missing_imports = true
+# Do not analyze these third-party trees. numpy arrives transitively via
+# transformers and its stubs use `type` statements, which are 3.12+ syntax that
+# our 3.11 target cannot parse. We only ever touch these behind `Any` anyway.
+follow_imports = "skip"
 
 # ---------------------------------------------------------------- pytest
 
