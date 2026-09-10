@@ -78,4 +78,15 @@ jobs:
           key: hf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
 
       - name: Test (network)
-        run: uv run pytest -m network
+        run: |
+          set +e
+          uv run pytest -m network
+          code=$?
+          # pytest exits 5 when no tests match the selector. There are no
+          # network-marked tests until M1 adds the real-tokenizer golden tests,
+          # and "nothing to run" is not a failure.
+          if [ "$code" -eq 5 ]; then
+            echo "No network-marked tests yet; nothing to run."
+            exit 0
+          fi
+          exit $code
