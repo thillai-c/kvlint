@@ -13,6 +13,8 @@ Semantics read from vllm-project/vllm @ main (2026-09-10), specifically
   cached.
 - `get_cached_block` returns None on the first missing block, so reuse is a
   prefix walk that stops at the first miss rather than a set intersection.
+- The free block queue is LRU over blocks with `ref_cnt == 0`, and uncached
+  blocks are evicted before cached ones.
 
 We reproduce the *equality semantics*, not the bit pattern. Our digests never
 appear in output; only hit counts do. `extra_keys` is always None here because
@@ -63,22 +65,30 @@ def block_hashes(token_ids: Sequence[int], block_size: int) -> list[bytes]:
 
 
 class VLLMBlockSimulator:
-    """Block-hash prefix cache."""
+    """Block-hash prefix cache with LRU eviction under a block budget."""
 
     engine = "vllm"
 
-    def __init__(self, block_size: int = DEFAULT_BLOCK_SIZE) -> None:
+    def __init__(
+        self,
+        block_size: int = DEFAULT_BLOCK_SIZE,
+        kv_budget_blocks: int | None = None,
+    ) -> None:
         if block_size < 1:
             raise ValueError("block_size must be at least 1")
+        if kv_budget_blocks is not None and kv_budget_blocks < 1:
+            raise ValueError("kv_budget_blocks must be at least 1 when set")
 
         self.block_size = block_size
+        self.kv_budget_blocks = kv_budget_blocks
 
         # Insertion order is LRU order: least recently used first. Values are the
         # id of the request that first created the block.
         self._cache: OrderedDict[bytes, str] = OrderedDict()
+        self.evictions = 0
 
     def config(self) -> dict[str, Any]:
-        return {"block_size": self.block_size}
+        return {"block_size": self.block_size, "kv_budget_blocks": self.kv_budget_blocks}
 
     def feed(self, request: TokenizedRequest) -> PerRequestResult:
         return self.feed_tokens(request.request_id, request.token_ids)
@@ -103,6 +113,21 @@ class VLLMBlockSimulator:
                 self._cache.move_to_end(digest)
             else:
                 self._cache[digest] = request_id
+
+        # Evict. Every block of this request is now at the LRU tail, so once
+        # the oldest entry belongs to this request there is nothing older left
+        # to drop. A request larger than the whole budget therefore overshoots,
+        # which real vLLM would handle by preemption.
+        # ASSUMPTION: no concurrency, so "belongs to this request" stands in
+        # for vLLM's ref_cnt > 0.
+        if self.kv_budget_blocks is not None and len(self._cache) > self.kv_budget_blocks:
+            current = set(digests)
+            while len(self._cache) > self.kv_budget_blocks:
+                oldest = next(iter(self._cache))
+                if oldest in current:
+                    break
+                del self._cache[oldest]
+                self.evictions += 1
 
         return PerRequestResult(
             request_id=request_id,
