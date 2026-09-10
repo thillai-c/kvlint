@@ -29,7 +29,8 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Any
 
-from kvlint.models import PerRequestResult, TokenizedRequest
+from kvlint.models import PerRequestResult, SimResult, TokenizedRequest
+from kvlint.sim.base import aggregate
 
 DEFAULT_BLOCK_SIZE = 16
 
@@ -83,7 +84,8 @@ class VLLMBlockSimulator:
         self.kv_budget_blocks = kv_budget_blocks
 
         # Insertion order is LRU order: least recently used first. Values are the
-        # id of the request that first created the block.
+        # id of the request that first created the block, which is how a finding
+        # can say "you diverged from request X".
         self._cache: OrderedDict[bytes, str] = OrderedDict()
         self._seen_any_request = False
         self.evictions = 0
@@ -99,8 +101,8 @@ class VLLMBlockSimulator:
         can measure the hash step without paying for pydantic validation."""
         digests = block_hashes(token_ids, self.block_size)
 
-        # Prefix walk. vLLM stops at the first miss, so a later matching block
-        # is worthless: its parent hash differs once the chain has diverged.
+        # 1. Prefix walk. vLLM stops at the first miss, so a later matching block
+        #    is worthless: its parent hash differs once the chain has diverged.
         hits = 0
         for digest in digests:
             if digest not in self._cache:
@@ -109,20 +111,20 @@ class VLLMBlockSimulator:
 
         nearest_prior = self._cache[digests[hits - 1]] if hits else None
 
-        # Insert or touch. Touching keeps the original writer id: we want to
-        # know who created the block, not who last reused it.
+        # 2. Insert or touch. Touching keeps the original writer id: we want to
+        #    know who created the block, not who last reused it.
         for digest in digests:
             if digest in self._cache:
                 self._cache.move_to_end(digest)
             else:
                 self._cache[digest] = request_id
 
-        # Evict. Every block of this request is now at the LRU tail, so once
-        # the oldest entry belongs to this request there is nothing older left
-        # to drop. A request larger than the whole budget therefore overshoots,
-        # which real vLLM would handle by preemption.
-        # ASSUMPTION: no concurrency, so "belongs to this request" stands in
-        # for vLLM's ref_cnt > 0.
+        # 3. Evict. Every block of this request is now at the LRU tail, so once
+        #    the oldest entry belongs to this request there is nothing older left
+        #    to drop. A request larger than the whole budget therefore overshoots,
+        #    which real vLLM would handle by preemption.
+        #    ASSUMPTION: no concurrency, so "belongs to this request" stands in
+        #    for vLLM's ref_cnt > 0.
         if self.kv_budget_blocks is not None and len(self._cache) > self.kv_budget_blocks:
             current = set(digests)
             while len(self._cache) > self.kv_budget_blocks:
@@ -147,3 +149,30 @@ class VLLMBlockSimulator:
             divergence_token_idx=divergence,
             nearest_prior_request_id=nearest_prior,
         )
+
+
+def simulate(
+    requests: Sequence[TokenizedRequest],
+    block_size: int = DEFAULT_BLOCK_SIZE,
+    kv_budget_blocks: int | None = None,
+) -> SimResult:
+    """Run a log through the simulator, plus an infinite-budget reference pass."""
+    budgeted = VLLMBlockSimulator(block_size, kv_budget_blocks)
+    actual = [budgeted.feed(request) for request in requests]
+
+    if kv_budget_blocks is None:
+        ideal = actual
+    else:
+        unbounded = VLLMBlockSimulator(block_size, None)
+        ideal = [unbounded.feed(request) for request in requests]
+
+    return aggregate(
+        engine="vllm",
+        config={
+            **budgeted.config(),
+            "evictions": budgeted.evictions,
+        },
+        actual=actual,
+        ideal=ideal,
+        block_size=block_size,
+    )
