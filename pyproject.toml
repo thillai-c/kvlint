@@ -98,9 +98,10 @@ follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers -m 'not perf'"
 markers = [
     "network: requires network access (downloads a HuggingFace tokenizer). Deselect with -m 'not network'.",
+    "perf: throughput benchmark, slow and memory-hungry. Run with -m perf.",
 ]
 
 [tool.coverage.run]
