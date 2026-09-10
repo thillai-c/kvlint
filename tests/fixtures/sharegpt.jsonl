@@ -1,0 +1,2 @@
+{"id":"conv-a","conversations":[{"from":"system","value":"You are terse."},{"from":"human","value":"Hi"},{"from":"gpt","value":"Hello."},{"from":"human","value":"Bye"},{"from":"gpt","value":"Goodbye."}]}
+{"conversations":[{"from":"human","value":"Only one turn"}]}
