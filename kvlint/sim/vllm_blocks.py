@@ -11,6 +11,8 @@ Semantics read from vllm-project/vllm @ main (2026-09-10), specifically
 - `get_request_block_hasher` hashes only complete blocks; it stops when the next
   full block would exceed the token count, so a trailing partial block is never
   cached.
+- `get_cached_block` returns None on the first missing block, so reuse is a
+  prefix walk that stops at the first miss rather than a set intersection.
 
 We reproduce the *equality semantics*, not the bit pattern. Our digests never
 appear in output; only hit counts do. `extra_keys` is always None here because
@@ -21,7 +23,11 @@ from __future__ import annotations
 
 import hashlib
 from array import array
+from collections import OrderedDict
 from collections.abc import Sequence
+from typing import Any
+
+from kvlint.models import PerRequestResult, TokenizedRequest
 
 DEFAULT_BLOCK_SIZE = 16
 
@@ -54,3 +60,52 @@ def block_hashes(token_ids: Sequence[int], block_size: int) -> list[bytes]:
         parent = block_digest(parent, token_ids[start : start + block_size])
         digests.append(parent)
     return digests
+
+
+class VLLMBlockSimulator:
+    """Block-hash prefix cache."""
+
+    engine = "vllm"
+
+    def __init__(self, block_size: int = DEFAULT_BLOCK_SIZE) -> None:
+        if block_size < 1:
+            raise ValueError("block_size must be at least 1")
+
+        self.block_size = block_size
+
+        # Insertion order is LRU order: least recently used first. Values are the
+        # id of the request that first created the block.
+        self._cache: OrderedDict[bytes, str] = OrderedDict()
+
+    def config(self) -> dict[str, Any]:
+        return {"block_size": self.block_size}
+
+    def feed(self, request: TokenizedRequest) -> PerRequestResult:
+        return self.feed_tokens(request.request_id, request.token_ids)
+
+    def feed_tokens(self, request_id: str, token_ids: Sequence[int]) -> PerRequestResult:
+        """Simulate one request. Kept separate from `feed` so the perf benchmark
+        can measure the hash step without paying for pydantic validation."""
+        digests = block_hashes(token_ids, self.block_size)
+
+        # Prefix walk. vLLM stops at the first miss, so a later matching block
+        # is worthless: its parent hash differs once the chain has diverged.
+        hits = 0
+        for digest in digests:
+            if digest not in self._cache:
+                break
+            hits += 1
+
+        # Insert or touch. Touching keeps the original writer id: we want to
+        # know who created the block, not who last reused it.
+        for digest in digests:
+            if digest in self._cache:
+                self._cache.move_to_end(digest)
+            else:
+                self._cache[digest] = request_id
+
+        return PerRequestResult(
+            request_id=request_id,
+            prompt_tokens=len(token_ids),
+            cached_tokens=hits * self.block_size,
+        )
