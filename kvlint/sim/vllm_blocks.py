@@ -8,6 +8,9 @@ Semantics read from vllm-project/vllm @ main (2026-09-10), specifically
   a chain and an identical block at a different offset is a different hash.
 - `NONE_HASH` seeds the chain, derived from the fixed string "vllm-none-hash"
   when the hash function is cryptographic.
+- `get_request_block_hasher` hashes only complete blocks; it stops when the next
+  full block would exceed the token count, so a trailing partial block is never
+  cached.
 
 We reproduce the *equality semantics*, not the bit pattern. Our digests never
 appear in output; only hit counts do. `extra_keys` is always None here because
@@ -41,3 +44,13 @@ def block_digest(parent: bytes, tokens: Sequence[int]) -> bytes:
     hasher = hashlib.sha256(parent)
     hasher.update(array(_TOKEN_TYPECODE, tokens).tobytes())
     return hasher.digest()
+
+
+def block_hashes(token_ids: Sequence[int], block_size: int) -> list[bytes]:
+    """Chained digests for every *complete* block; the partial tail is dropped."""
+    digests: list[bytes] = []
+    parent = NONE_HASH
+    for start in range(0, len(token_ids) - block_size + 1, block_size):
+        parent = block_digest(parent, token_ids[start : start + block_size])
+        digests.append(parent)
+    return digests
