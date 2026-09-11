@@ -191,7 +191,52 @@ def lint(
     verbose: VerboseOpt = False,
 ) -> None:
     """Analyze, then explain *why* the cache misses."""
-    _not_yet("lint", "M4")
+    from kvlint.errors import KvlintError
+    from kvlint.ingest import load as load_log
+    from kvlint.lint.engine import exceeds
+    from kvlint.lint.engine import run as run_rules
+    from kvlint.report.terminal import print_findings
+    from kvlint.sim import sglang_radix, vllm_blocks
+    from kvlint.tokenize.renderer import tokenize_requests
+
+    try:
+        requests = load_log(logs, fmt.value)
+        tokenized = tokenize_requests(model, requests)
+    except KvlintError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(ExitCode.ERROR) from exc
+
+    sims = [
+        vllm_blocks.simulate(tokenized, block_size),
+        sglang_radix.simulate(tokenized),
+    ]
+    findings = run_rules(requests, tokenized, block_size)
+
+    console.print(
+        f"Linted [bold]{len(tokenized)}[/] requests from [bold]{logs}[/] "
+        f"(vLLM hit rate {sims[0].hit_rate * 100:.1f}%, "
+        f"SGLang {sims[1].hit_rate * 100:.1f}%)"
+    )
+    console.print()
+    print_findings(console, findings, verbose=verbose)
+
+    if json_out is not None:
+        report_model = Report(
+            input_summary={
+                "path": str(logs),
+                "format": fmt.value,
+                "model": model,
+                "requests": len(tokenized),
+            },
+            sims=sims,
+            findings=findings,
+            version=__version__,
+        )
+        json_out.write_text(report_model.model_dump_json(indent=2), encoding="utf-8")
+        console.print(f"Wrote JSON report to [bold]{json_out}[/]")
+
+    if fail_on is not None and exceeds(findings, fail_on.value):
+        raise typer.Exit(ExitCode.FINDINGS)
 
 
 @app.command()
