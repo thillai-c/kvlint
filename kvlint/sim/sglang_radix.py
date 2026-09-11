@@ -234,6 +234,12 @@ class SGLangRadixSimulator:
         """Simulate one request. Split from `feed` so benchmarks can skip pydantic."""
         matched, owner = self._match(token_ids)
 
+        # Page alignment: SGLang cannot reuse a partial page.
+        if self.page_size > 1:
+            matched -= matched % self.page_size
+            if matched == 0:
+                owner = None
+
         protect_after = self._clock + 1
         self._insert(token_ids, request_id)
         self._evict(protect_after)
