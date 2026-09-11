@@ -21,6 +21,8 @@ import heapq
 from collections.abc import Sequence
 from typing import Any
 
+from kvlint.models import PerRequestResult, TokenizedRequest
+
 DEFAULT_PAGE_SIZE = 1
 
 
@@ -128,3 +130,80 @@ class SGLangRadixSimulator:
             node = child
 
         return matched, owner
+
+    # ---------------------------------------------------------------- insertion
+
+    def _split(self, node: RadixNode, at: int) -> None:
+        """Break `node` into a head of length `at` and a tail holding the rest."""
+        tail = RadixNode(
+            key=node.key[at:],
+            parent=node,
+            owner=node.owner,
+            last_access=node.last_access,
+        )
+        tail.children = node.children
+        for grandchild in tail.children.values():
+            grandchild.parent = tail
+
+        node.children = {tail.key[0]: tail}
+        node.key = node.key[:at]
+        if tail.is_leaf:
+            self._push_leaf(tail)
+
+    def _insert(self, tokens: Sequence[int], request_id: str) -> None:
+        node = self._root
+        position = 0
+        now = self._tick()
+
+        while position < len(tokens):
+            first = tokens[position]
+            child = node.children.get(first)
+
+            if child is None:
+                leaf = RadixNode(
+                    key=list(tokens[position:]),
+                    parent=node,
+                    owner=request_id,
+                    last_access=now,
+                )
+                node.children[first] = leaf
+                self._total_tokens += len(leaf.key)
+                self._push_leaf(leaf)
+                return
+
+            shared = _common_prefix_len(child.key, tokens, position)
+            if shared < len(child.key):
+                self._split(child, shared)
+
+            child.last_access = now
+            node = child
+            position += shared
+
+        # The whole request was already present; refresh the node we landed on.
+        node.last_access = now
+        if node.is_leaf:
+            self._push_leaf(node)
+
+    # ---------------------------------------------------------------- feeding
+
+    def feed(self, request: TokenizedRequest) -> PerRequestResult:
+        return self.feed_tokens(request.request_id, request.token_ids)
+
+    def feed_tokens(self, request_id: str, token_ids: Sequence[int]) -> PerRequestResult:
+        """Simulate one request. Split from `feed` so benchmarks can skip pydantic."""
+        matched, owner = self._match(token_ids)
+
+        self._insert(token_ids, request_id)
+
+        divergence: int | None = None
+        if self._seen_any_request and matched < len(token_ids):
+            divergence = matched
+        self._seen_any_request = True
+
+        return PerRequestResult(
+            request_id=request_id,
+            prompt_tokens=len(token_ids),
+            cached_tokens=matched,
+            divergence_token_idx=divergence,
+            nearest_prior_request_id=owner,
+        )
