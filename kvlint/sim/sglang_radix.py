@@ -27,7 +27,8 @@ import heapq
 from collections.abc import Sequence
 from typing import Any
 
-from kvlint.models import PerRequestResult, TokenizedRequest
+from kvlint.models import PerRequestResult, SimResult, TokenizedRequest
+from kvlint.sim.base import aggregate
 
 DEFAULT_PAGE_SIZE = 1
 
@@ -256,3 +257,28 @@ class SGLangRadixSimulator:
             divergence_token_idx=divergence,
             nearest_prior_request_id=owner,
         )
+
+
+def simulate(
+    requests: Sequence[TokenizedRequest],
+    kv_budget_tokens: int | None = None,
+    page_size: int = DEFAULT_PAGE_SIZE,
+) -> SimResult:
+    """Run a log through the simulator, plus an infinite-budget reference pass."""
+    budgeted = SGLangRadixSimulator(kv_budget_tokens, page_size)
+    actual = [budgeted.feed(request) for request in requests]
+
+    if kv_budget_tokens is None:
+        ideal = actual
+    else:
+        unbounded = SGLangRadixSimulator(None, page_size)
+        ideal = [unbounded.feed(request) for request in requests]
+
+    return aggregate(
+        engine="sglang",
+        config={**budgeted.config(), "evictions": budgeted.evictions},
+        actual=actual,
+        ideal=ideal,
+        # Token granularity, so there is no block size to report.
+        block_size=page_size if page_size > 1 else None,
+    )
