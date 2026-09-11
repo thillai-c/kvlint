@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from kvlint.models import TokenizedRequest
-from kvlint.sim.sglang_radix import SGLangRadixSimulator
+from kvlint.sim.sglang_radix import SGLangRadixSimulator, simulate
 
 
 def tokens(count: int, start: int = 0) -> list[int]:
@@ -141,3 +141,117 @@ def test_page_size_larger_than_the_match_yields_nothing() -> None:
     second = sim.feed(request("r2", tokens(40) + tokens(10, start=900)))
     assert second.cached_tokens == 0
     assert second.nearest_prior_request_id is None
+
+
+# ------------------------------------------------------------------ eviction
+
+
+def test_eviction_respects_the_token_budget() -> None:
+    """M3 acceptance: the tree never exceeds its budget."""
+    sim = SGLangRadixSimulator(kv_budget_tokens=100)
+    for i in range(10):
+        sim.feed(request(f"r{i}", tokens(50, start=i * 1000)))
+        assert sim.cached_tokens_held <= 100
+
+
+def test_eviction_drops_the_least_recently_used_entry() -> None:
+    sim = SGLangRadixSimulator(kv_budget_tokens=60)
+    sim.feed(request("old", tokens(30, start=0)))
+    sim.feed(request("mid", tokens(30, start=1000)))
+    # Re-touch `old` so `mid` becomes the least recently used.
+    sim.feed(request("old-again", tokens(30, start=0)))
+    sim.feed(request("new", tokens(30, start=2000)))
+
+    assert sim.feed(request("probe-old", tokens(30, start=0))).cached_tokens == 30
+    assert sim.feed(request("probe-mid", tokens(30, start=1000))).cached_tokens == 0
+
+
+def test_infinite_budget_never_evicts() -> None:
+    sim = SGLangRadixSimulator(kv_budget_tokens=None)
+    for i in range(10):
+        sim.feed(request(f"r{i}", tokens(50, start=i * 1000)))
+    assert sim.evictions == 0
+    assert sim.cached_tokens_held == 500
+
+
+def test_current_request_survives_its_own_eviction_pass() -> None:
+    """A request bigger than the budget overshoots rather than evicting itself."""
+    sim = SGLangRadixSimulator(kv_budget_tokens=10)
+    sim.feed(request("big", tokens(100)))
+    assert sim.feed(request("big-again", tokens(100))).cached_tokens == 100
+
+
+# ------------------------------------------------------------------ aggregate
+
+
+def test_simulate_reports_hit_rate_and_engine() -> None:
+    payload = tokens(50)
+    result = simulate([request("r1", payload), request("r2", payload)])
+    assert result.engine == "sglang"
+    assert result.hit_rate == pytest.approx(0.5)
+    assert result.block_size is None
+
+
+def test_page_size_is_reported_as_block_size() -> None:
+    result = simulate([request("r1", tokens(32))], page_size=16)
+    assert result.block_size == 16
+
+
+def test_ideal_hit_rate_exceeds_actual_under_pressure() -> None:
+    requests = [
+        request("r1", tokens(50, start=0)),
+        request("r2", tokens(50, start=1000)),
+        request("r3", tokens(50, start=0)),
+    ]
+    squeezed = simulate(requests, kv_budget_tokens=60)
+    assert squeezed.hit_rate < squeezed.ideal_hit_rate
+
+    by_id = {r.request_id: r for r in squeezed.per_request}
+    assert by_id["r3"].evicted_hit_loss > 0
+
+
+def test_empty_log_does_not_divide_by_zero() -> None:
+    result = simulate([])
+    assert result.hit_rate == 0.0
+    assert result.per_request == []
+
+
+def test_repeated_runs_are_byte_identical() -> None:
+    requests = [request(f"r{i}", tokens(60, start=i * 7)) for i in range(10)]
+    first = simulate(requests, kv_budget_tokens=200)
+    second = simulate(requests, kv_budget_tokens=200)
+    assert first.model_dump_json() == second.model_dump_json()
+
+
+# ------------------------------------------------------------------ cross-engine
+
+
+def test_sglang_never_caches_less_than_vllm() -> None:
+    """Token granularity is a superset of block granularity.
+
+    If this ever inverts, one of the two simulators is wrong.
+    """
+    from kvlint.sim import vllm_blocks
+
+    requests = [
+        request("r1", tokens(100)),
+        request("r2", tokens(73) + tokens(27, start=500)),
+        request("r3", tokens(45) + tokens(55, start=800)),
+        request("r4", tokens(100)),
+    ]
+    vllm = vllm_blocks.simulate(requests)
+    sglang = simulate(requests)
+    assert sglang.hit_rate >= vllm.hit_rate
+
+
+# ------------------------------------------------------------------ validation
+
+
+def test_rejects_invalid_page_size() -> None:
+    with pytest.raises(ValueError, match="page_size"):
+        SGLangRadixSimulator(page_size=0)
+
+
+def test_rejects_invalid_budget() -> None:
+    with pytest.raises(ValueError, match="kv_budget_tokens"):
+        SGLangRadixSimulator(kv_budget_tokens=0)
