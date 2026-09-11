@@ -14,6 +14,7 @@ import typer
 from rich.console import Console
 
 from kvlint import __version__
+from kvlint.models import Report
 
 console = Console()
 err_console = Console(stderr=True)
@@ -122,7 +123,56 @@ def analyze(
     verbose: VerboseOpt = False,
 ) -> None:
     """Simulate prefix-cache hit rate for a log."""
-    _not_yet("analyze", "M2/M3")
+    from kvlint.errors import KvlintError
+    from kvlint.ingest import load as load_log
+    from kvlint.report.terminal import print_analysis
+    from kvlint.sim import sglang_radix, vllm_blocks
+    from kvlint.tokenize.renderer import tokenize_requests
+
+    try:
+        requests = load_log(logs, fmt.value)
+        tokenized = tokenize_requests(model, requests)
+    except KvlintError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(ExitCode.ERROR) from exc
+
+    selected = engine or [EngineName.vllm, EngineName.sglang]
+    results = []
+    for name in selected:
+        if name is EngineName.vllm:
+            results.append(vllm_blocks.simulate(tokenized, block_size, kv_budget_blocks))
+        else:
+            results.append(sglang_radix.simulate(tokenized, kv_budget_tokens))
+
+    print_analysis(
+        console,
+        results,
+        {
+            "path": str(logs),
+            "format": fmt.value,
+            "model": model,
+            "requests": len(tokenized),
+        },
+        verbose=verbose,
+    )
+
+    if json_out is not None:
+        report_model = Report(
+            input_summary={
+                "path": str(logs),
+                "format": fmt.value,
+                "model": model,
+                "requests": len(tokenized),
+            },
+            sims=results,
+            findings=[],
+            version=__version__,
+        )
+        json_out.write_text(report_model.model_dump_json(indent=2), encoding="utf-8")
+        console.print(f"Wrote JSON report to [bold]{json_out}[/]")
+
+    if html_out is not None:
+        err_console.print("[yellow]HTML reports arrive in M7.[/]")
 
 
 @app.command()
