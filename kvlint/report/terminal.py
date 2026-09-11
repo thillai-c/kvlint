@@ -8,7 +8,7 @@ from __future__ import annotations
 from rich.console import Console
 from rich.table import Table
 
-from kvlint.models import SimResult
+from kvlint.models import LintFinding, SimResult
 from kvlint.sim.metrics import divergence_histogram, summarize
 
 
@@ -87,3 +87,49 @@ def print_analysis(
         for result in results:
             console.print()
             console.print(divergence_table(result))
+
+
+_SEVERITY_STYLE = {"high": "red", "medium": "yellow", "low": "dim"}
+
+
+def findings_table(findings: list[LintFinding]) -> Table:
+    """One row per rule that fired, most expensive first."""
+    table = Table(title="Findings", title_justify="left")
+    table.add_column("Severity")
+    table.add_column("Rule", style="bold")
+    table.add_column("Affected", justify="right")
+    table.add_column("Tokens lost", justify="right")
+    table.add_column("Fix", justify="center")
+    table.add_column("Evidence", overflow="fold")
+
+    for finding in findings:
+        style = _SEVERITY_STYLE.get(finding.severity, "")
+        table.add_row(
+            f"[{style}]{finding.severity}[/]" if style else finding.severity,
+            finding.rule_id,
+            _pct(finding.affected_fraction),
+            f"{finding.est_tokens_lost:,}",
+            "auto" if finding.auto_fixable else "manual",
+            finding.evidence,
+        )
+    return table
+
+
+def print_findings(console: Console, findings: list[LintFinding], verbose: bool = False) -> None:
+    if not findings:
+        console.print("[green]No cache-breaking patterns found.[/]")
+        return
+
+    console.print(findings_table(findings))
+    console.print()
+    console.print(
+        "[dim]Tokens lost is an upper bound and rules can overlap, so the column does not sum.[/]"
+    )
+
+    if verbose:
+        for finding in findings:
+            console.print()
+            console.print(f"[bold]{finding.rule_id}[/]: {finding.suggestion}")
+            shown = ", ".join(finding.affected_request_ids[:5])
+            more = len(finding.affected_request_ids) - 5
+            console.print(f"  requests: {shown}" + (f" (+{more} more)" if more > 0 else ""))
