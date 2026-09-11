@@ -8,11 +8,17 @@ Semantics read from sgl-project/sglang @ main (2026-09-10),
 - When `page_size > 1` the query is page-aligned first
   (`key = key.page_aligned(self.page_size)`), so matches land on page multiples.
   The default is 1, which is true token granularity.
+- Eviction takes evictable leaves in `last_access_time` order, requiring
+  `lock_ref == 0` and all children already evicted.
 
 This is the finer-grained of the two simulators: vLLM can only see multiples of
 16 tokens, while this sees the exact token where two prompts stop agreeing. That
 makes it the attribution source for the lint rules in M4, not just a second
 hit-rate number.
+
+ASSUMPTION: real SGLang eviction has more nuance than pure LRU over leaves
+(page tables, lock refs held by running requests). We model the documented
+behaviour and note the gap, per build plan section 9.
 """
 
 from __future__ import annotations
@@ -184,6 +190,41 @@ class SGLangRadixSimulator:
         if node.is_leaf:
             self._push_leaf(node)
 
+    # ---------------------------------------------------------------- eviction
+
+    def _evict(self, protect_after: int) -> None:
+        """Drop least recently used leaves until back inside the budget.
+
+        `protect_after` is the clock value at the start of this request. Anything
+        touched at or after it belongs to the request we just served, and real
+        SGLang would hold a lock_ref on it, so we stop rather than evict it.
+        """
+        if self.kv_budget_tokens is None:
+            return
+
+        while self._total_tokens > self.kv_budget_tokens and self._leaves:
+            stamp, _, node = heapq.heappop(self._leaves)
+
+            # Stale entry: the node was touched, adopted children, or already went.
+            if not node.alive or not node.is_leaf or node.last_access != stamp:
+                continue
+            if node.last_access >= protect_after:
+                # Everything left belongs to the request we just served.
+                self._push_leaf(node)
+                return
+
+            parent = node.parent
+            if parent is None:  # pragma: no cover
+                continue
+
+            del parent.children[node.key[0]]
+            self._total_tokens -= len(node.key)
+            node.alive = False
+            self.evictions += 1
+
+            if parent is not self._root and parent.is_leaf:
+                self._push_leaf(parent)
+
     # ---------------------------------------------------------------- feeding
 
     def feed(self, request: TokenizedRequest) -> PerRequestResult:
@@ -193,7 +234,9 @@ class SGLangRadixSimulator:
         """Simulate one request. Split from `feed` so benchmarks can skip pydantic."""
         matched, owner = self._match(token_ids)
 
+        protect_after = self._clock + 1
         self._insert(token_ids, request_id)
+        self._evict(protect_after)
 
         divergence: int | None = None
         if self._seen_any_request and matched < len(token_ids):
