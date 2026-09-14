@@ -95,3 +95,36 @@ def _canonicalize_fenced_json(text: str) -> tuple[str, bool]:
         return f"```json\n{rendered}\n```"
 
     return _FENCED_JSON.sub(replace, text), changed
+
+
+# ---------------------------------------------------------------- moving volatiles
+
+
+def _shape(line: str) -> str:
+    """The line with every dynamic value blanked out.
+
+    Two lines share a shape when they are the same template holding different
+    values, which is exactly the signature of a cache-breaking field.
+    """
+    for pattern in MOVABLE_PATTERNS:
+        line = pattern.sub(_PLACEHOLDER, line)
+    return line
+
+
+def volatile_shapes(requests: list[Request]) -> set[str]:
+    """Line shapes that appear with more than one value across the log.
+
+    Only these get moved. A date that is identical in every request is not
+    breaking anything, and rewriting it would be churn for no gain.
+    """
+    seen: dict[str, set[str]] = {}
+    for request in requests:
+        for message in request.messages:
+            if message.role != "system":
+                continue
+            for line in message.content.split("\n"):
+                shape = _shape(line)
+                if shape == line:
+                    continue  # no dynamic value in this line
+                seen.setdefault(shape, set()).add(line)
+    return {shape for shape, values in seen.items() if len(values) > 1}
