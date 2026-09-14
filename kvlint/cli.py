@@ -14,7 +14,7 @@ import typer
 from rich.console import Console
 
 from kvlint import __version__
-from kvlint.models import Report
+from kvlint.models import Report, SimResult, TokenizedRequest
 
 console = Console()
 err_console = Console(stderr=True)
@@ -43,6 +43,11 @@ class LogFormat(enum.StrEnum):
 class EngineName(enum.StrEnum):
     vllm = "vllm"
     sglang = "sglang"
+
+
+class FixTarget(enum.StrEnum):
+    system_end = "system_end"
+    user_start = "user_start"
 
 
 class Severity(enum.StrEnum):
@@ -255,10 +260,80 @@ def fix(
     prefill_ms_per_1k_tokens: Annotated[
         float, typer.Option("--prefill-ms-per-1k-tokens", help="For the TTFT estimate.")
     ] = 40.0,
+    block_size: BlockSizeOpt = 16,
+    target: Annotated[
+        FixTarget, typer.Option("--target", help="Where relocated dynamic lines land.")
+    ] = FixTarget.system_end,
     verbose: VerboseOpt = False,
 ) -> None:
     """Apply auto-fixable findings and report before/after."""
-    _not_yet("fix", "M5")
+    from kvlint.errors import KvlintError
+    from kvlint.fix.estimate import Rates, deltas
+    from kvlint.fix.rewriter import fix_requests
+    from kvlint.fix.writer import write as write_log
+    from kvlint.ingest import load as load_log
+    from kvlint.models import BeforeAfter
+    from kvlint.report.terminal import print_before_after
+    from kvlint.sim import sglang_radix, vllm_blocks
+    from kvlint.tokenize.renderer import tokenize_requests
+
+    if apply and out is None:
+        err_console.print("[red]--apply needs --out to say where to write the fixed log.[/]")
+        raise typer.Exit(ExitCode.ERROR)
+
+    try:
+        requests = load_log(logs, fmt.value)
+        before_tokens = tokenize_requests(model, requests)
+        report = fix_requests(requests, target=target.value)
+        after_tokens = tokenize_requests(model, report.requests)
+    except KvlintError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(ExitCode.ERROR) from exc
+
+    def simulate_both(tokens: list[TokenizedRequest]) -> dict[str, SimResult]:
+        return {
+            "vllm": vllm_blocks.simulate(tokens, block_size),
+            "sglang": sglang_radix.simulate(tokens),
+        }
+
+    before = simulate_both(before_tokens)
+    after = simulate_both(after_tokens)
+
+    rates = Rates(
+        price_per_1m_input=price_per_1m_input,
+        cached_discount=cached_discount,
+        prefill_ms_per_1k_tokens=prefill_ms_per_1k_tokens,
+    )
+    ttft_delta, cost_delta = deltas(before["vllm"], after["vllm"], rates)
+
+    before_after = BeforeAfter(
+        hit_rate_before=before["vllm"].hit_rate,
+        hit_rate_after=after["vllm"].hit_rate,
+        per_engine={
+            engine: {"before": before[engine].hit_rate, "after": after[engine].hit_rate}
+            for engine in ("vllm", "sglang")
+        },
+        est_ttft_delta_ms=ttft_delta,
+        est_cost_delta=cost_delta,
+    )
+
+    print_before_after(console, before_after, report.changed, len(requests))
+
+    if verbose:
+        console.print()
+        console.print(
+            f"[dim]moved {report.moved_lines} volatile lines, "
+            f"canonicalized JSON in {report.canonicalized_json} requests[/]"
+        )
+
+    if apply and out is not None:
+        try:
+            written = write_log(out, report.requests, fmt.value)
+        except KvlintError as exc:
+            err_console.print(f"[red]{exc}[/]")
+            raise typer.Exit(ExitCode.ERROR) from exc
+        console.print()
+        console.print(f"Wrote [bold]{written}[/] fixed requests to [bold]{out}[/]")
 
 
 @app.command()
