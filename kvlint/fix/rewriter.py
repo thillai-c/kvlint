@@ -26,7 +26,7 @@ from typing import Any
 from kvlint.lint.rules.dynamic_id import ID_PATTERN
 from kvlint.lint.rules.dynamic_time import TIME_PATTERN
 from kvlint.lint.rules.user_in_system import USER_FIELD_PATTERN
-from kvlint.models import Request
+from kvlint.models import Message, Request
 
 CONTEXT_HEADER = "[context]"
 
@@ -128,3 +128,112 @@ def volatile_shapes(requests: list[Request]) -> set[str]:
                     continue  # no dynamic value in this line
                 seen.setdefault(shape, set()).add(line)
     return {shape for shape, values in seen.items() if len(values) > 1}
+
+
+def _split_system(content: str, volatile: set[str]) -> tuple[str, list[str]]:
+    """Separate a system message into stable lines and lines to relocate."""
+    lines = content.split("\n")
+    kept: list[str] = []
+    moved: list[str] = []
+    for line in lines:
+        if _shape(line) in volatile:
+            moved.append(line)
+        else:
+            kept.append(line)
+
+    return "\n".join(kept).rstrip(), moved
+
+
+# ---------------------------------------------------------------- entry point
+
+
+def fix_requests(
+    requests: list[Request],
+    target: str = "system_end",
+) -> FixReport:
+    """Apply every auto-fixable transformation, returning a new list.
+
+    `target` decides where relocated lines land: the end of the system message,
+    or the start of the last user message. The second moves them out of the
+    shared prefix entirely, which caches better but puts them further from the
+    instructions that reference them.
+    """
+    if target not in {"system_end", "user_start"}:
+        raise ValueError("target must be 'system_end' or 'user_start'")
+
+    # Normalize first: shapes are compared as text, so CRLF drift would make the
+    # same line look like two different shapes and defeat the volatility check.
+    staged = [
+        request.model_copy(
+            update={
+                "messages": [
+                    message.model_copy(update={"content": normalize_text(message.content)})
+                    for message in request.messages
+                ]
+            }
+        )
+        for request in requests
+    ]
+
+    volatile = volatile_shapes(staged)
+    report = FixReport(requests=[])
+
+    for original, request in zip(requests, staged, strict=True):
+        messages = list(request.messages)
+        moved: list[str] = []
+        json_changed = False
+
+        for index, message in enumerate(messages):
+            content, fenced_changed = _canonicalize_fenced_json(message.content)
+            json_changed = json_changed or fenced_changed
+
+            if message.role == "system" and volatile:
+                content, relocated = _split_system(content, volatile)
+                moved.extend(relocated)
+
+            messages[index] = message.model_copy(update={"content": content})
+
+        if moved:
+            messages = _reattach(messages, moved, target)
+
+        tools = request.tools
+        if tools is not None:
+            canonical = canonicalize(tools)
+            if json.dumps(canonical) != json.dumps(tools):
+                json_changed = True
+            tools = canonical
+
+        fixed = request.model_copy(update={"messages": messages, "tools": tools})
+        report.requests.append(fixed)
+
+        if fixed != original:
+            report.changed_request_ids.append(fixed.request_id)
+        if any(m.content != o.content for m, o in zip(messages, original.messages, strict=False)):
+            report.normalized_whitespace += 1
+        report.moved_lines += len(moved)
+        report.canonicalized_json += int(json_changed)
+
+    return report
+
+
+def _reattach(messages: list[Message], moved: list[str], target: str) -> list[Message]:
+    """Put relocated lines back into the prompt, after the stable text."""
+    block = f"\n\n{CONTEXT_HEADER}\n" + "\n".join(moved)
+
+    if target == "system_end":
+        for index, message in enumerate(messages):
+            if message.role == "system":
+                messages[index] = message.model_copy(update={"content": message.content + block})
+                return messages
+
+    # Fall through to the last user turn, which is also the `user_start` target.
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].role == "user":
+            messages[index] = messages[index].model_copy(
+                update={"content": block.lstrip("\n") + "\n\n" + messages[index].content}
+            )
+            return messages
+
+    # No system and no user message: keep the content rather than dropping it.
+    messages.append(Message(role="user", content=block.lstrip("\n")))
+    return messages
