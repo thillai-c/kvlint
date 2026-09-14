@@ -8,7 +8,7 @@ from __future__ import annotations
 from rich.console import Console
 from rich.table import Table
 
-from kvlint.models import LintFinding, SimResult
+from kvlint.models import BeforeAfter, LintFinding, SimResult
 from kvlint.sim.metrics import divergence_histogram, summarize
 
 
@@ -133,3 +133,48 @@ def print_findings(console: Console, findings: list[LintFinding], verbose: bool 
             shown = ", ".join(finding.affected_request_ids[:5])
             more = len(finding.affected_request_ids) - 5
             console.print(f"  requests: {shown}" + (f" (+{more} more)" if more > 0 else ""))
+
+
+def before_after_table(before_after: BeforeAfter) -> Table:
+    """Hit rate for each engine, before and after the rewrite."""
+    table = Table(title="Before and after", title_justify="left")
+    table.add_column("Engine", style="bold")
+    table.add_column("Before", justify="right")
+    table.add_column("After", justify="right")
+    table.add_column("Change", justify="right")
+
+    for engine, rates in before_after.per_engine.items():
+        delta = rates["after"] - rates["before"]
+        arrow = "green" if delta > 0 else "red" if delta < 0 else "dim"
+        table.add_row(
+            engine,
+            _pct(rates["before"]),
+            _pct(rates["after"]),
+            f"[{arrow}]{delta * 100:+.1f} pp[/]",
+        )
+    return table
+
+
+def print_before_after(
+    console: Console,
+    before_after: BeforeAfter,
+    changed: int,
+    total: int,
+) -> None:
+    console.print(f"Rewrote [bold]{changed}[/] of {total} requests.")
+    console.print()
+    console.print(before_after_table(before_after))
+
+    if before_after.est_ttft_delta_ms is None and before_after.est_cost_delta is None:
+        return
+
+    console.print()
+    if before_after.est_ttft_delta_ms is not None:
+        console.print(
+            f"Estimated TTFT change: [bold]{before_after.est_ttft_delta_ms:+.1f} ms[/] per request"
+        )
+    if before_after.est_cost_delta is not None:
+        console.print(f"Estimated cost change: [bold]{before_after.est_cost_delta:+.4f}[/]")
+    console.print(
+        "[dim]TTFT and cost are estimates from the rates you supplied, not measurements.[/]"
+    )
