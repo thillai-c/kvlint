@@ -131,7 +131,13 @@ def volatile_shapes(requests: list[Request]) -> set[str]:
 
 
 def _split_system(content: str, volatile: set[str]) -> tuple[str, list[str]]:
-    """Separate a system message into stable lines and lines to relocate."""
+    """Separate a system message into stable lines and lines to relocate.
+
+    Returns the content untouched when the volatile lines already sit at the end.
+    Relocating them would be a no-op that still costs the tokens of a `[context]`
+    header, lowering the hit rate instead of raising it. A fixer that can make
+    things worse is worse than no fixer.
+    """
     lines = content.split("\n")
     kept: list[str] = []
     moved: list[str] = []
@@ -140,6 +146,16 @@ def _split_system(content: str, volatile: set[str]) -> tuple[str, list[str]]:
             moved.append(line)
         else:
             kept.append(line)
+
+    if not moved:
+        return content, []
+
+    last_stable = max(
+        (i for i, line in enumerate(lines) if _shape(line) not in volatile), default=-1
+    )
+    first_volatile = min(i for i, line in enumerate(lines) if _shape(line) in volatile)
+    if first_volatile > last_stable:
+        return content, []
 
     return "\n".join(kept).rstrip(), moved
 
