@@ -55,8 +55,16 @@ def validate_vllm(
     model: str,
     block_size: int = 16,
     reset_cache: bool = True,
+    kv_budget_blocks: int | None = None,
 ) -> ValidationResult:
-    """Replay against vLLM and difference its prefix-cache counters."""
+    """Replay against vLLM and difference its prefix-cache counters.
+
+    `kv_budget_blocks` must match the server's actual KV capacity whenever the
+    server is small enough to evict. Simulating unbounded against a server that
+    is evicting compares two different things, and the gap would look like a
+    simulator error rather than the memory pressure it is. vLLM prints the figure
+    at startup as "# GPU blocks: N".
+    """
     notes: list[str] = []
 
     was_reset = reset_prefix_cache(client) if reset_cache else False
@@ -77,7 +85,7 @@ def validate_vllm(
             "there is nothing to compare against"
         )
 
-    simulated = vllm_blocks.simulate(tokenized, block_size).hit_rate
+    simulated = vllm_blocks.simulate(tokenized, block_size, kv_budget_blocks).hit_rate
 
     return ValidationResult(
         engine="vllm",
@@ -98,6 +106,7 @@ def validate_sglang(
     tokenized: list[TokenizedRequest],
     model: str,
     reset_cache: bool = True,
+    kv_budget_tokens: int | None = None,
 ) -> ValidationResult:
     """Replay against SGLang and read its cache-hit-rate gauge. Indicative only."""
     notes = [
@@ -112,7 +121,7 @@ def validate_sglang(
 
     outcome = replay(client, requests, tokenized, model)
     real = sglang_metrics.scrape_hit_rate(client)
-    simulated = sglang_radix.simulate(tokenized).hit_rate
+    simulated = sglang_radix.simulate(tokenized, kv_budget_tokens).hit_rate
 
     return ValidationResult(
         engine="sglang",

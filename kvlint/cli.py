@@ -382,6 +382,18 @@ def validate(
     ] = EngineName.vllm,
     fmt: FormatOpt = LogFormat.openai,
     block_size: BlockSizeOpt = 16,
+    kv_budget_blocks: Annotated[
+        int | None,
+        typer.Option(
+            "--kv-budget-blocks",
+            help="vLLM KV capacity in blocks. Match the server's '# GPU blocks' "
+            "when it is small enough to evict.",
+        ),
+    ] = None,
+    kv_budget_tokens: Annotated[
+        int | None,
+        typer.Option("--kv-budget-tokens", help="SGLang KV capacity in tokens."),
+    ] = None,
     reset_cache: Annotated[
         bool,
         typer.Option(
@@ -416,11 +428,22 @@ def validate(
         with client:
             if engine is EngineName.vllm:
                 result = validate_vllm(
-                    client, requests, tokenized, model, block_size, reset_cache=reset_cache
+                    client,
+                    requests,
+                    tokenized,
+                    model,
+                    block_size,
+                    reset_cache=reset_cache,
+                    kv_budget_blocks=kv_budget_blocks,
                 )
             else:
                 result = validate_sglang(
-                    client, requests, tokenized, model, reset_cache=reset_cache
+                    client,
+                    requests,
+                    tokenized,
+                    model,
+                    reset_cache=reset_cache,
+                    kv_budget_tokens=kv_budget_tokens,
                 )
     except KvlintError as exc:
         raise _fail(str(exc)) from exc
