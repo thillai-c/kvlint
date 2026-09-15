@@ -142,7 +142,7 @@ def _findings_table(report: Report) -> str:
     )
     return f"""<table>
 <thead><tr><th>Severity</th><th>Rule</th><th>Affected</th>
-<th>Tokens lost</th><th>Fix</th><th>Suggestion</th></tr></thead>
+<th>Tokens lost</th><th>Fix</th><th>Evidence</th><th>Suggestion</th></tr></thead>
 <tbody>{rows}</tbody>
 </table>
 <p class="note">Tokens lost is an upper bound and rules can overlap,
