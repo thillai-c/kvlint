@@ -136,6 +136,7 @@ Worth knowing before you install it.
   and where it is wrong
 - [RULES.md](docs/RULES.md): the eight rules, what fires them and what does not
 - [VALIDATION.md](docs/VALIDATION.md): reproducing the live comparison
+- [CHANGELOG.md](CHANGELOG.md): what shipped in each release
 
 ## Development
 
