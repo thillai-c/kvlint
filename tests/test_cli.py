@@ -41,19 +41,39 @@ def test_no_args_shows_help() -> None:
     assert "Usage" in result.stdout
 
 
-@pytest.mark.parametrize("command", COMMANDS)
-def test_stubs_fail_loudly_rather_than_silently_succeeding(command: str) -> None:
-    """A stub must never exit 0 and let a caller think it did the work."""
+def test_no_command_is_a_stub_any_more() -> None:
+    """Every command in the spec is implemented.
+
+    This replaced a test that asserted the opposite. While commands were being
+    built, a stub exiting 0 would have let a caller believe work happened; now
+    the risk is the reverse, a command quietly regressing to a stub.
+    """
+    import inspect
+
+    from kvlint import cli
+    from kvlint.cli import _not_yet  # noqa: F401  (still used for future commands)
+
+    source = inspect.getsource(cli)
+    for command in COMMANDS:
+        assert f'_not_yet("{command}"' not in source, f"{command} is still a stub"
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["analyze", "lint", "fix", "validate", "report"],
+)
+def test_commands_fail_cleanly_on_a_missing_file(command: str) -> None:
+    """An error must exit non-zero rather than tracebacking at the user."""
     args = {
-        "analyze": ["analyze", "x.jsonl", "--model", "m"],
-        "lint": ["lint", "x.jsonl", "--model", "m"],
-        "fix": ["fix", "x.jsonl", "--model", "m"],
-        "validate": ["validate", "x.jsonl", "--model", "m", "--server", "http://localhost:8000"],
-        "demo": ["demo"],
-        "report": ["report", "r.json", "--html", "out.html"],
+        "analyze": ["analyze", "nope.jsonl", "--model", "m"],
+        "lint": ["lint", "nope.jsonl", "--model", "m"],
+        "fix": ["fix", "nope.jsonl", "--model", "m"],
+        "validate": ["validate", "nope.jsonl", "--model", "m", "--server", "http://localhost:1"],
+        "report": ["report", "nope.json", "--html", "out.html"],
     }[command]
     result = runner.invoke(app, args)
-    assert result.exit_code == ExitCode.ERROR
+    assert result.exit_code != ExitCode.OK
+    assert "Traceback" not in result.output
 
 
 def test_exit_codes_match_spec() -> None:
