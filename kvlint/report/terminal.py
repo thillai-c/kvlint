@@ -178,3 +178,56 @@ def print_before_after(
     console.print(
         "[dim]TTFT and cost are estimates from the rates you supplied, not measurements.[/]"
     )
+
+
+def print_validation(console: Console, result: object) -> None:
+    """Report simulated against real, and say plainly which it is."""
+    from kvlint.live.validate import ACCEPTABLE_ERROR_PP, ValidationResult
+
+    assert isinstance(result, ValidationResult)
+
+    table = Table(title=f"Simulated vs real ({result.engine})", title_justify="left")
+    table.add_column("Source", style="bold")
+    table.add_column("Hit rate", justify="right")
+    table.add_row("kvlint simulation", _pct(result.simulated_hit_rate))
+    table.add_row(
+        f"{result.engine} server",
+        _pct(result.real_hit_rate) if result.real_hit_rate is not None else "unavailable",
+    )
+    console.print(table)
+    console.print()
+
+    error = result.abs_error_pp
+    if error is None:
+        console.print("[yellow]No real hit rate to compare against.[/]")
+    else:
+        verdict = "green" if result.within_tolerance else "red"
+        console.print(
+            f"Absolute error: [{verdict}]{error:.2f} pp[/] (tolerance {ACCEPTABLE_ERROR_PP:.0f} pp)"
+        )
+        if not result.exact:
+            console.print("[dim]Indicative only, see the notes below.[/]")
+
+    console.print()
+    if result.tokens_agree:
+        console.print(
+            f"[green]Token counts match the server for all {result.requests} requests.[/]"
+        )
+    else:
+        console.print(
+            f"[red]Token count mismatch on {len(result.token_mismatches)} requests.[/] "
+            "This means kvlint renders the chat template differently from the server, "
+            "so every hit rate above is unreliable."
+        )
+        for check in result.token_mismatches[:5]:
+            console.print(f"  {check.request_id}: kvlint {check.local}, server {check.server}")
+
+    if result.failures:
+        console.print()
+        console.print(f"[red]{len(result.failures)} requests failed:[/]")
+        for failure in result.failures[:5]:
+            console.print(f"  {failure}")
+
+    for note in result.notes:
+        console.print()
+        console.print(f"[yellow]Note:[/] {note}")
