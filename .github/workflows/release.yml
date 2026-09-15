@@ -4,7 +4,7 @@ name: Release
 #
 # One-time setup on PyPI before the first run:
 #   PyPI -> Your projects -> kvlint -> Publishing -> Add a new pending publisher
-#     Owner:            <github-owner>
+#     Owner:            thillai-c
 #     Repository:       kvlint
 #     Workflow name:    release.yml
 #     Environment name: pypi
@@ -29,7 +29,28 @@ jobs:
         run: uv build
 
       - name: Check metadata
-        run: uvx twine check dist/*
+        run: uvx twine check --strict dist/*
+
+      # A tag that disagrees with kvlint/__init__.py would publish the wrong
+      # version under the right name, which cannot be undone on PyPI.
+      - name: Tag must match the package version
+        if: github.event_name == 'release'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          built=$(python -c "import glob,re;print(re.match(r'.*kvlint-([^-]+)-', glob.glob('dist/*.whl')[0]).group(1))")
+          echo "tag=$tag built=$built"
+          if [ "$tag" != "$built" ]; then
+            echo "::error::release tag $tag does not match package version $built"
+            exit 1
+          fi
+
+      # Publishing a broken package is worse than publishing late.
+      - name: Install the wheel and run it
+        run: |
+          uv venv /tmp/check
+          uv pip install --python /tmp/check dist/*.whl
+          /tmp/check/bin/kvlint --version
+          /tmp/check/bin/kvlint --help
 
       - uses: actions/upload-artifact@v4
         with:
