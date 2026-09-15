@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from kvlint.models import SimResult
+from kvlint.models import SimResult, TokenizedRequest
 
 
 def cached_token_fraction(result: SimResult) -> float:
@@ -71,3 +71,33 @@ def summarize(result: SimResult) -> dict[str, float | int | str | None]:
         "cached_tokens": sum(r.cached_tokens for r in result.per_request),
         "block_size": result.block_size,
     }
+
+
+def hit_rate_curve(
+    tokenized: list[TokenizedRequest],
+    budgets: list[int],
+    block_size: int = 16,
+) -> list[tuple[int, float]]:
+    """Hit rate at each KV budget, for the memory-pressure chart.
+
+    The shape is the answer to "would more GPU help". A curve that rises steeply
+    means the workload is memory-limited; one that is already flat means the
+    prompts are the problem and more memory changes nothing.
+    """
+    from kvlint.sim import vllm_blocks
+
+    return [
+        (budget, vllm_blocks.simulate(tokenized, block_size, budget).hit_rate)
+        for budget in sorted(budgets)
+    ]
+
+
+def suggest_budgets(
+    tokenized: list[TokenizedRequest], block_size: int = 16, points: int = 8
+) -> list[int]:
+    """A spread of budgets from tight to roomy, based on the log's own size."""
+    total_blocks = sum(len(t.token_ids) // block_size for t in tokenized)
+    if total_blocks < 2:
+        return []
+    step = max(1, total_blocks // points)
+    return sorted({max(1, i) for i in range(step, total_blocks + step, step)})
