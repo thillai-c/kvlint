@@ -23,13 +23,24 @@ from datetime import UTC, datetime, timedelta
 
 from kvlint.models import Message, Request
 
-SYSTEM_PROMPT = """You are Acme Corp's customer support assistant.
+# Several tenants, each with its own instruction block, requests interleaved.
+#
+# One shared system prompt would make the memory-pressure axis untestable: those
+# blocks would be touched by every request, so they would always be the most
+# recently used and could never be evicted, and the hit-rate-against-KV-budget
+# curve would be flat at every budget. Competing prefixes are both more realistic
+# and the only way that chart says anything.
+TENANTS = ["Acme Corp", "Northwind Trading", "Globex Retail", "Initech Supply"]
+
+SYSTEM_PROMPT = """You are {tenant}'s customer support assistant.
 Always answer in two sentences or fewer.
 Cite the knowledge base article id you relied on, in square brackets.
 Never speculate about delivery dates you cannot verify from the order record.
 If the customer is angry, acknowledge the frustration before answering.
 Escalate to a human when the customer asks for a refund above 500 dollars.
-Do not disclose internal system names or ticket routing rules."""
+Do not disclose internal system names or ticket routing rules.
+Refer to the {tenant} returns policy when a customer asks about refunds.
+Escalate anything involving {tenant} enterprise accounts to the named owner."""
 
 QUESTIONS = [
     "Where is my order number {order}?",
@@ -57,7 +68,8 @@ def generate(count: int = 60, seed: int = 0, dirty: bool = True) -> list[Request
     requests: list[Request] = []
 
     for i in range(count):
-        system = SYSTEM_PROMPT
+        tenant = TENANTS[i % len(TENANTS)]
+        system = SYSTEM_PROMPT.format(tenant=tenant)
         if dirty:
             stamp = (EPOCH + timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M:%SZ")
             system = (
