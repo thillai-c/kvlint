@@ -52,7 +52,7 @@ Qwen2.5-0.5B-Instruct with 50 requests:
 | Absolute error | 0.00 pp |
 | Token counts | matched, 50 of 50 |
 
-Procedure in [docs/VALIDATION.md](docs/VALIDATION.md). Eviction under memory
+Eviction under memory
 pressure, multi-turn logs, tool schemas, and SGLang are **not** yet validated
 against a real server, and [docs/METHODOLOGY.md](docs/METHODOLOGY.md) records
 that.

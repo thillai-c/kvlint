@@ -127,7 +127,9 @@ lucky one. Prefix caching is deterministic: with a cold cache, sequential
 requests and no memory pressure, the cached-token count is fully determined by
 the block-hash chain. A gap would have meant a real defect.
 
-Full procedure in [VALIDATION.md](VALIDATION.md).
+Reproduce it by replaying a log against a local `vllm serve` with
+`kvlint validate`, which reports the absolute error and cross-checks token
+counts on every run.
 
 ### What that run does not cover
 

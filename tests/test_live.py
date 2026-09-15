@@ -2,7 +2,7 @@
 
 No real engine here: `httpx.MockTransport` stands in for vLLM, with counters that
 behave the way the real ones do. The real number comes from a GPU box and is
-recorded in docs/VALIDATION.md, never fabricated here.
+recorded from a real run, never fabricated here.
 """
 
 from __future__ import annotations

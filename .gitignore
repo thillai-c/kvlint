@@ -220,3 +220,8 @@ __marimo__/
 # Generated reports, not source.
 demo-report.html
 *.report.html
+
+# Local validation notes, not part of the published project.
+docs/VALIDATION.md
+sample-log.jsonl
+fixed-log.jsonl

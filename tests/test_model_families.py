@@ -151,7 +151,7 @@ def test_model_size_does_not_change_the_tokenizer() -> None:
 
     Prefix caching is a function of token ids and block boundaries, so two models
     sharing a tokenizer and template cache identically regardless of parameter
-    count. This is the basis for the claim in docs/VALIDATION.md.
+    count. This is the basis for the claim in the README.
     """
     small = load_tokenizer("Qwen/Qwen2.5-0.5B-Instruct")
     large = load_tokenizer("Qwen/Qwen2.5-7B-Instruct")
