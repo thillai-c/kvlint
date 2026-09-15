@@ -6,8 +6,8 @@ One prompt per line:
 
 The text is used verbatim. No chat template is applied, because the whole point of
 this format is that the caller already has the exact string the engine will see.
-This is also the format `vllm analyze-prefix-cache` consumes, which makes it the
-natural input for cross-checking against it later.
+Useful when you already build prompts yourself and want the cache analyzed on
+the exact bytes you send, with no template in the way.
 """
 
 from __future__ import annotations
