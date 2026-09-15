@@ -2,14 +2,20 @@
 
 **A linter for your prefix cache.**
 
-![Prefix cache hit rate before and after kvlint](docs/before-after.svg)
+[![PyPI](https://img.shields.io/pypi/v/kvlint)](https://pypi.org/project/kvlint/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/kvlint/)
+[![CI](https://github.com/thillai-c/kvlint/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/thillai-c/kvlint/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+
+kvlint reads your LLM request logs offline, tells you which line of which
+prompt is destroying your prefix cache, and rewrites it.
 
 ```
 Hit rate 8.0% to 65.3% after fixing 4 issues (vLLM), 11.0% to 68.0% (SGLang).
 ```
 
 That is `kvlint demo` on a synthetic support workload. Reproduce it in one
-command:
+command, no install required:
 
 ```bash
 uvx kvlint demo
@@ -47,23 +53,41 @@ server.
 ## What a finding looks like
 
 ```
-Severity  Rule            Affected  Tokens lost  Fix   Evidence
-high      dynamic_time       98.3%        8,483  auto  time value in system prompt changed:
-                                                       '2026-09-11T08:01:00Z' vs '2026-09-11T08:00:00Z'
-high      user_in_system     98.3%        8,483  auto  per-user field in system prompt changed:
-                                                       'user: customer1@example.com' vs 'customer0@...'
-low       block_straddle     98.3%        8,483  auto  shared prefix ends at token 22, mid-block
+$ kvlint lint requests.jsonl --model Qwen/Qwen2.5-0.5B-Instruct
+
+Linted 40 requests from requests.jsonl (vLLM hit rate 8.0%, SGLang 10.9%)
+
+Findings
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Severity ┃ Rule           ┃ Affected ┃ Tokens lost ┃ Fix  ┃ Evidence                ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ high     │ dynamic_id     │    97.5% │       6,772 │ auto │ identifier in system    │
+│          │                │          │             │      │ prompt changed:         │
+│          │                │          │             │      │ 'req_56448162f3' vs     │
+│          │                │          │             │      │ 'req_51706749f3'        │
+│ high     │ dynamic_time   │    97.5% │       6,772 │ auto │ time value in system    │
+│          │                │          │             │      │ prompt changed:         │
+│          │                │          │             │      │ '2026-09-11T08:01:00Z'  │
+│          │                │          │             │      │ vs                      │
+│          │                │          │             │      │ '2026-09-11T08:00:00Z'  │
+│ high     │ user_in_system │    97.5% │       6,772 │ auto │ per-user field in       │
+│          │                │          │             │      │ system prompt changed   │
+│ low      │ block_straddle │    97.5% │       6,772 │ auto │ shared prefix ends at   │
+│          │                │          │             │      │ token 22, mid-block     │
+└──────────┴────────────────┴──────────┴─────────────┴──────┴─────────────────────────┘
+
+Tokens lost is an upper bound and rules can overlap, so the column does not sum.
 ```
 
 Eight rules, each with a positive and a negative test. Full reference in
-[docs/RULES.md](docs/RULES.md).
+[RULES.md](https://github.com/thillai-c/kvlint/blob/main/docs/RULES.md).
 
 ## Validated against a real server
 
 The vLLM simulator has been checked against a live vLLM server, not just against
 itself:
 
-| | Value |
+| Source | Hit rate |
 |---|---|
 | kvlint simulation | 84.0% |
 | vLLM 0.29.0 server | 84.0% |
@@ -75,9 +99,11 @@ the chat template to the same bytes the server prefills, which is the foundation
 everything else rests on. `kvlint validate` performs both checks on every run and
 exits non-zero if either fails.
 
-Procedure in [docs/VALIDATION.md](docs/VALIDATION.md). **Eviction under memory
-pressure, multi-turn logs, tool schemas, and SGLang are not yet validated against
-a real server**, and [docs/METHODOLOGY.md](docs/METHODOLOGY.md) says so.
+`kvlint validate` reproduces this against your own server.
+
+**Eviction under memory pressure, multi-turn logs, tool schemas, and SGLang are
+not yet validated against a real server**, and
+[METHODOLOGY.md](https://github.com/thillai-c/kvlint/blob/main/docs/METHODOLOGY.md) says so rather than glossing over it.
 
 ## Use it in CI
 
@@ -132,11 +158,10 @@ Worth knowing before you install it.
 
 ## Documentation
 
-- [METHODOLOGY.md](docs/METHODOLOGY.md): what is measured, simulated, estimated,
+- [METHODOLOGY.md](https://github.com/thillai-c/kvlint/blob/main/docs/METHODOLOGY.md): what is measured, simulated, estimated,
   and where it is wrong
-- [RULES.md](docs/RULES.md): the eight rules, what fires them and what does not
-- [VALIDATION.md](docs/VALIDATION.md): reproducing the live comparison
-- [CHANGELOG.md](CHANGELOG.md): what shipped in each release
+- [RULES.md](https://github.com/thillai-c/kvlint/blob/main/docs/RULES.md): the eight rules, what fires them and what does not
+- [CHANGELOG.md](https://github.com/thillai-c/kvlint/blob/main/CHANGELOG.md): what shipped in each release
 
 ## Development
 
