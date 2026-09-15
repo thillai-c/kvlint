@@ -93,11 +93,21 @@ def hit_rate_curve(
 
 
 def suggest_budgets(
-    tokenized: list[TokenizedRequest], block_size: int = 16, points: int = 8
+    tokenized: list[TokenizedRequest], block_size: int = 16, points: int = 9
 ) -> list[int]:
-    """A spread of budgets from tight to roomy, based on the log's own size."""
+    """A log-spaced spread of budgets from very tight to the whole working set.
+
+    Log spacing rather than linear, because the interesting feature of the curve
+    is a knee: hit rate is flat and low while prefixes evict each other, then
+    jumps once the budget fits the working set. Linear sampling starting at
+    total/8 steps straight over that knee and draws a flat line, which reads as
+    "memory does not matter" when the truth may be the opposite.
+    """
     total_blocks = sum(len(t.token_ids) // block_size for t in tokenized)
     if total_blocks < 2:
         return []
-    step = max(1, total_blocks // points)
-    return sorted({max(1, i) for i in range(step, total_blocks + step, step)})
+
+    budgets = {1, total_blocks}
+    for i in range(1, points):
+        budgets.add(max(1, round(total_blocks ** (i / points))))
+    return sorted(budgets)
