@@ -261,4 +261,6 @@ the run happens.
 
 | Date | vLLM version | Device | Model | Requests | Simulated | Real | Error | Tokens match |
 |---|---|---|---|---|---|---|---|---|
-| _pending_ | | | | | | | | |
+| 2026-09-14 | 0.29.0 | NVIDIA GeForce RTX 4070 Laptop (8 GiB, WSL2) | Qwen/Qwen2.5-0.5B-Instruct | 50 | 84.0% | 84.0% | 0.00 pp | Yes (50/50) |
+
+
