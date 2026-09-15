@@ -7,6 +7,7 @@ computes for the same prompt. M6 checks that claim against a live server's
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Any
 
@@ -20,6 +21,10 @@ def load_tokenizer(model: str) -> Any:
     Loading is the slowest step in a run, and `analyze` tokenizes thousands of
     requests with one model, so the cache matters more than it looks.
     """
+    # transformers prints a banner about missing PyTorch on import. We only ever
+    # use tokenizers and chat templates, so the banner is noise in CLI output.
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
     try:
         from transformers import AutoTokenizer
     except ImportError as exc:  # pragma: no cover
