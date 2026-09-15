@@ -366,3 +366,24 @@ def test_divergence_chart_narrows_buckets_when_positions_cluster() -> None:
     )
     rendered = html.render(report)
     assert "Every request diverges at token" in rendered
+
+
+def test_error_messages_are_not_split_by_line_wrapping(tmp_path: Path) -> None:
+    """Regression: CI failed on Linux and passed on Windows and macOS.
+
+    Rich wraps to 80 columns without a TTY, so a message can be split mid-phrase
+    depending on how long the path before it is. Linux tmp_path is short enough
+    that the wrap landed inside "file not found"; the longer Windows path pushed
+    the wrap elsewhere and the assertion passed. The test was platform-dependent,
+    not the code.
+
+    The filename here is sized to straddle the 80-column boundary, so this fails
+    without the width pin in conftest.
+    """
+    source = tmp_path / ("a" * 18 + ".json")
+    result = runner.invoke(app, ["report", str(source), "--html", str(tmp_path / "o.html")])
+
+    assert result.exit_code == ExitCode.ERROR
+    assert "file not found" in result.output, "the message was split across lines: " + repr(
+        result.output
+    )
