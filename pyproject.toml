@@ -73,6 +73,21 @@ path = "kvlint/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["kvlint"]
 
+# An sdist defaults to everything git tracks, which pulls in tooling config and
+# working notes. Publishing those is how an internal planning doc ends up on
+# PyPI. List what a source distribution actually needs instead.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/kvlint",
+    "/tests",
+    "/scripts",
+    "/docs",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
+
 # ---------------------------------------------------------------- ruff
 
 [tool.ruff]
