@@ -72,26 +72,46 @@ def _divergence_figure(go: Any, report: Report, bucket_size: int = 64) -> Any | 
     if not report.sims:
         return None
 
+    # Size the buckets from the data rather than fixing them at 64. A workload
+    # where every prompt breaks at the same token is common and important, but
+    # with a fixed bucket it renders as one bar spanning the whole plot, which
+    # looks like a broken chart instead of a finding.
+    positions = [
+        record.divergence_token_idx
+        for sim in report.sims
+        for record in sim.per_request
+        if record.divergence_token_idx is not None
+    ]
+    if not positions:
+        return None
+
+    span = max(positions) - min(positions)
+    bucket = bucket_size if span > bucket_size * 2 else max(1, span // 8 or 1)
+
     figure = go.Figure()
     for sim in report.sims:
-        histogram = divergence_histogram(sim, bucket_size)
+        histogram = divergence_histogram(sim, bucket)
         if not histogram:
             continue
-        figure.add_trace(
-            go.Bar(
-                name=sim.engine,
-                x=[f"{s}-{s + bucket_size - 1}" for s in histogram],
-                y=list(histogram.values()),
-            )
-        )
+        labels = [
+            str(start) if bucket == 1 else f"{start}-{start + bucket - 1}" for start in histogram
+        ]
+        figure.add_trace(go.Bar(name=sim.engine, x=labels, y=list(histogram.values())))
     if not figure.data:
         return None
 
+    subtitle = ""
+    if len(set(positions)) == 1:
+        # Worth saying outright: one position means a single template defect, not
+        # scattered drift, and it is the easiest kind to fix.
+        subtitle = f"<br><sub>Every request diverges at token {positions[0]}</sub>"
+
     figure.update_layout(
-        title="Where prompts stop matching (token position)",
+        title=f"Where prompts stop matching (token position){subtitle}",
         xaxis_title="Token position of divergence",
         yaxis_title="Requests",
         barmode="group",
+        bargap=0.6,
         template="plotly_white",
     )
     return figure
