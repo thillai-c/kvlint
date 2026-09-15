@@ -12,9 +12,13 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from kvlint import __version__
 from kvlint.models import Report, SimResult, TokenizedRequest
+
+DEMO_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
+"""Small, ungated, and the model the simulator was validated against."""
 
 console = Console()
 err_console = Console(stderr=True)
@@ -81,6 +85,19 @@ def main(
     """kvlint: a linter for your prefix cache."""
 
 
+def _fail(message: str, code: ExitCode = ExitCode.ERROR) -> typer.Exit:
+    """Print an error and return the exception to raise.
+
+    Escapes the message first. Rich treats square brackets as markup, so an
+    unescaped error would silently swallow parts of itself: the plotly hint
+    `pip install 'kvlint[report]'` printed as `pip install 'kvlint'`, which is
+    advice that does not work.
+    """
+    colour = "yellow" if code is ExitCode.ERROR and message.startswith("HTML") else "red"
+    err_console.print(f"[{colour}]{escape(message)}[/]")
+    return typer.Exit(code)
+
+
 def _not_yet(command: str, milestone: str) -> None:
     """Fail honestly rather than pretending a stub did something."""
     err_console.print(
@@ -130,6 +147,7 @@ def analyze(
     """Simulate prefix-cache hit rate for a log."""
     from kvlint.errors import KvlintError
     from kvlint.ingest import load as load_log
+    from kvlint.report.json_out import write as json_write
     from kvlint.report.terminal import print_analysis
     from kvlint.sim import sglang_radix, vllm_blocks
     from kvlint.tokenize.renderer import tokenize_requests
@@ -138,8 +156,7 @@ def analyze(
         requests = load_log(logs, fmt.value)
         tokenized = tokenize_requests(model, requests)
     except KvlintError as exc:
-        err_console.print(f"[red]{exc}[/]")
-        raise typer.Exit(ExitCode.ERROR) from exc
+        raise _fail(str(exc)) from exc
 
     selected = engine or [EngineName.vllm, EngineName.sglang]
     results = []
@@ -173,11 +190,33 @@ def analyze(
             findings=[],
             version=__version__,
         )
-        json_out.write_text(report_model.model_dump_json(indent=2), encoding="utf-8")
+        json_write(json_out, report_model)
         console.print(f"Wrote JSON report to [bold]{json_out}[/]")
 
     if html_out is not None:
-        err_console.print("[yellow]HTML reports arrive in M7.[/]")
+        from kvlint.report import html
+        from kvlint.sim.metrics import hit_rate_curve, suggest_budgets
+
+        report_model = Report(
+            input_summary={
+                "path": str(logs),
+                "format": fmt.value,
+                "model": model,
+                "requests": len(tokenized),
+            },
+            sims=results,
+            findings=[],
+            version=__version__,
+        )
+        try:
+            html.write(
+                html_out,
+                report_model,
+                hit_rate_curve(tokenized, suggest_budgets(tokenized, block_size), block_size),
+            )
+        except KvlintError as exc:
+            raise _fail(str(exc)) from exc
+        console.print(f"Wrote the HTML report to [bold]{html_out}[/]")
 
 
 @app.command()
@@ -200,6 +239,7 @@ def lint(
     from kvlint.ingest import load as load_log
     from kvlint.lint.engine import exceeds
     from kvlint.lint.engine import run as run_rules
+    from kvlint.report.json_out import write as json_write
     from kvlint.report.terminal import print_findings
     from kvlint.sim import sglang_radix, vllm_blocks
     from kvlint.tokenize.renderer import tokenize_requests
@@ -208,8 +248,7 @@ def lint(
         requests = load_log(logs, fmt.value)
         tokenized = tokenize_requests(model, requests)
     except KvlintError as exc:
-        err_console.print(f"[red]{exc}[/]")
-        raise typer.Exit(ExitCode.ERROR) from exc
+        raise _fail(str(exc)) from exc
 
     sims = [
         vllm_blocks.simulate(tokenized, block_size),
@@ -237,7 +276,7 @@ def lint(
             findings=findings,
             version=__version__,
         )
-        json_out.write_text(report_model.model_dump_json(indent=2), encoding="utf-8")
+        json_write(json_out, report_model)
         console.print(f"Wrote JSON report to [bold]{json_out}[/]")
 
     if fail_on is not None and exceeds(findings, fail_on.value):
@@ -278,8 +317,7 @@ def fix(
     from kvlint.tokenize.renderer import tokenize_requests
 
     if apply and out is None:
-        err_console.print("[red]--apply needs --out to say where to write the fixed log.[/]")
-        raise typer.Exit(ExitCode.ERROR)
+        raise _fail("--apply needs --out to say where to write the fixed log.")
 
     try:
         requests = load_log(logs, fmt.value)
@@ -287,8 +325,7 @@ def fix(
         report = fix_requests(requests, target=target.value)
         after_tokens = tokenize_requests(model, report.requests)
     except KvlintError as exc:
-        err_console.print(f"[red]{exc}[/]")
-        raise typer.Exit(ExitCode.ERROR) from exc
+        raise _fail(str(exc)) from exc
 
     def simulate_both(tokens: list[TokenizedRequest]) -> dict[str, SimResult]:
         return {
@@ -330,8 +367,7 @@ def fix(
         try:
             written = write_log(out, report.requests, fmt.value)
         except KvlintError as exc:
-            err_console.print(f"[red]{exc}[/]")
-            raise typer.Exit(ExitCode.ERROR) from exc
+            raise _fail(str(exc)) from exc
         console.print()
         console.print(f"Wrote [bold]{written}[/] fixed requests to [bold]{out}[/]")
 
@@ -367,8 +403,7 @@ def validate(
         requests = load_log(logs, fmt.value)
         tokenized = tokenize_requests(model, requests)
     except KvlintError as exc:
-        err_console.print(f"[red]{exc}[/]")
-        raise typer.Exit(ExitCode.ERROR) from exc
+        raise _fail(str(exc)) from exc
 
     console.print(
         f"Replaying [bold]{len(requests)}[/] requests against [bold]{server}[/] "
@@ -388,11 +423,9 @@ def validate(
                     client, requests, tokenized, model, reset_cache=reset_cache
                 )
     except KvlintError as exc:
-        err_console.print(f"[red]{exc}[/]")
-        raise typer.Exit(ExitCode.ERROR) from exc
+        raise _fail(str(exc)) from exc
     except Exception as exc:
-        err_console.print(f"[red]could not reach {server}: {exc}[/]")
-        raise typer.Exit(ExitCode.ERROR) from exc
+        raise _fail(f"could not reach {server}: {exc}") from exc
 
     print_validation(console, result)
 
@@ -407,10 +440,98 @@ def demo(
     out: Annotated[
         Path | None, typer.Option("--out", help="Write the generated synthetic log here.")
     ] = None,
+    html_out: Annotated[
+        Path | None, typer.Option("--html", help="Write an HTML report here (needs [report]).")
+    ] = None,
+    model: Annotated[
+        str, typer.Option("--model", help="Tokenizer to use for the demo.")
+    ] = DEMO_MODEL,
+    requests: Annotated[int, typer.Option("--requests", help="How many to generate.")] = 60,
     verbose: VerboseOpt = False,
 ) -> None:
     """Generate a synthetic log with injected anti-patterns, then lint and fix it."""
-    _not_yet("demo", "M7")
+    from kvlint.demo.synthetic import generate
+    from kvlint.errors import KvlintError
+    from kvlint.fix.rewriter import fix_requests
+    from kvlint.fix.writer import write as write_log
+    from kvlint.lint.engine import run as run_rules
+    from kvlint.report.terminal import print_findings
+    from kvlint.sim import sglang_radix, vllm_blocks
+    from kvlint.tokenize.renderer import tokenize_requests
+
+    console.print(f"Generating a {requests} request support workload with known problems.")
+    console.print(f"Tokenizing with [bold]{model}[/] (downloads once, tokenizer only).")
+    console.print()
+
+    dirty = generate(count=requests)
+    try:
+        before_tokens = tokenize_requests(model, dirty)
+    except KvlintError as exc:
+        raise _fail(str(exc)) from exc
+
+    fixed = fix_requests(dirty).requests
+    after_tokens = tokenize_requests(model, fixed)
+
+    before = {
+        "vllm": vllm_blocks.simulate(before_tokens),
+        "sglang": sglang_radix.simulate(before_tokens),
+    }
+    after = {
+        "vllm": vllm_blocks.simulate(after_tokens),
+        "sglang": sglang_radix.simulate(after_tokens),
+    }
+    findings = run_rules(dirty, before_tokens)
+
+    print_findings(console, findings, verbose=verbose)
+    console.print()
+
+    # The headline. One line, the number first, because it is the whole point.
+    console.print(
+        f"[bold]Hit rate {before['vllm'].hit_rate * 100:.1f}% to "
+        f"{after['vllm'].hit_rate * 100:.1f}% after fixing {len(findings)} issues "
+        f"(vLLM), {before['sglang'].hit_rate * 100:.1f}% to "
+        f"{after['sglang'].hit_rate * 100:.1f}% (SGLang).[/]"
+    )
+
+    if out is not None:
+        write_log(out, dirty, "openai")
+        console.print(f"Wrote the demo log to [bold]{out}[/]")
+
+    if html_out is not None:
+        from kvlint.models import BeforeAfter
+        from kvlint.report import html
+        from kvlint.sim.metrics import hit_rate_curve, suggest_budgets
+
+        report_model = Report(
+            input_summary={
+                "path": "synthetic demo log",
+                "format": "openai",
+                "model": model,
+                "requests": len(dirty),
+            },
+            sims=[before["vllm"], before["sglang"]],
+            findings=findings,
+            before_after=BeforeAfter(
+                hit_rate_before=before["vllm"].hit_rate,
+                hit_rate_after=after["vllm"].hit_rate,
+                per_engine={
+                    e: {"before": before[e].hit_rate, "after": after[e].hit_rate}
+                    for e in ("vllm", "sglang")
+                },
+            ),
+            version=__version__,
+        )
+        # The curve is drawn on the *fixed* log. On the broken one almost nothing
+        # is cacheable, so the line is flat at every budget and says only "your
+        # prompts are the problem", which the other two charts already said. On
+        # the fixed log it answers the next question: how much KV memory this
+        # workload actually needs.
+        curve = hit_rate_curve(after_tokens, suggest_budgets(after_tokens))
+        try:
+            html.write(html_out, report_model, curve)
+        except KvlintError as exc:
+            raise _fail(str(exc)) from exc
+        console.print(f"Wrote the HTML report to [bold]{html_out}[/]")
 
 
 @app.command()
@@ -419,7 +540,29 @@ def report(
     html_out: Annotated[Path, typer.Option("--html", help="Where to write the HTML report.")],
 ) -> None:
     """Render a saved JSON report as HTML."""
-    _not_yet("report", "M7")
+    import json
+
+    from kvlint.errors import KvlintError
+    from kvlint.report import html
+
+    try:
+        payload = json.loads(result.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise _fail(f"{result}: file not found") from None
+    except json.JSONDecodeError as exc:
+        raise _fail(f"{result}: not valid JSON: {exc.msg}") from exc
+
+    try:
+        report_model = Report.model_validate(payload)
+    except Exception as exc:
+        raise _fail(f"{result}: not a kvlint report: {exc}") from exc
+
+    try:
+        html.write(html_out, report_model)
+    except KvlintError as exc:
+        raise _fail(str(exc)) from exc
+
+    console.print(f"Wrote the HTML report to [bold]{html_out}[/]")
 
 
 if __name__ == "__main__":  # pragma: no cover
