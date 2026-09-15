@@ -51,8 +51,13 @@ jobs:
 
       # Offline by design: the default suite uses a vendored tokenizer fixture so
       # a HuggingFace outage can never turn CI red. See the `network` job below.
+      #
+      # `not perf` has to be repeated here. pytest's -m takes a single value, so
+      # this flag REPLACES the `-m 'not perf'` in pyproject's addopts rather than
+      # combining with it. Without it CI runs the benchmarks, which allocate 20M
+      # token ids and assert a wall-clock budget on a shared runner.
       - name: Test
-        run: uv run pytest -m "not network"
+        run: uv run pytest -m "not network and not perf"
 
   network:
     # Non-blocking: exercises the real Qwen2.5 tokenizer and chat template.
@@ -80,7 +85,7 @@ jobs:
       - name: Test (network)
         run: |
           set +e
-          uv run pytest -m network
+          uv run pytest -m "network and not perf"
           code=$?
           # pytest exits 5 when no tests match the selector. There are no
           # network-marked tests until M1 adds the real-tokenizer golden tests,
