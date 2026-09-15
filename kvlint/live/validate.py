@@ -10,10 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from kvlint.live import vllm_metrics
+from kvlint.live import sglang_metrics, vllm_metrics
 from kvlint.live.replay import TokenCheck, replay, reset_prefix_cache
 from kvlint.models import Request, TokenizedRequest
-from kvlint.sim import vllm_blocks
+from kvlint.sim import sglang_radix, vllm_blocks
 
 ACCEPTABLE_ERROR_PP = 3.0
 """Build plan M6: simulated and real must agree within 3 percentage points."""
@@ -89,4 +89,39 @@ def validate_vllm(
         notes=notes,
         cache_was_reset=was_reset,
         exact=True,
+    )
+
+
+def validate_sglang(
+    client: Any,
+    requests: list[Request],
+    tokenized: list[TokenizedRequest],
+    model: str,
+    reset_cache: bool = True,
+) -> ValidationResult:
+    """Replay against SGLang and read its cache-hit-rate gauge. Indicative only."""
+    notes = [
+        "SGLang exposes a gauge, not counters, so its value covers the server's "
+        "whole history rather than just this replay. Treat the comparison as "
+        "indicative unless the server was idle and the cache was reset."
+    ]
+
+    was_reset = reset_prefix_cache(client) if reset_cache else False
+    if reset_cache and not was_reset:
+        notes.append("could not reset the prefix cache before replaying")
+
+    outcome = replay(client, requests, tokenized, model)
+    real = sglang_metrics.scrape_hit_rate(client)
+    simulated = sglang_radix.simulate(tokenized).hit_rate
+
+    return ValidationResult(
+        engine="sglang",
+        requests=len(requests),
+        simulated_hit_rate=simulated,
+        real_hit_rate=real,
+        token_mismatches=outcome.mismatches,
+        failures=outcome.failures,
+        notes=notes,
+        cache_was_reset=was_reset,
+        exact=False,
     )
