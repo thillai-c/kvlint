@@ -15,19 +15,29 @@
 
 Target user: teams self-hosting vLLM / SGLang / llama.cpp for chat, RAG, and agent workloads.
 
-### Positioning (important — the space has neighbors)
+### What makes it worth building
 
-- `vllm analyze-prefix-cache` (vLLM PR #48369, unmerged as of Sept 2026): exact block-chain cacheability upper bound, plain-prompt JSONL only, explicitly **no** eviction modeling and **no** cause classification. We go beyond it on all three. Once merged, add an optional "cross-check against vLLM's own CLI" mode.
-- `prefixcash` (PyPI, Aug 2026): diagnoses prefix breakage for **commercial APIs** (OpenAI/Anthropic/DeepSeek) using provider usage fields, word-level. We target **self-hosted engines**, token/block-level, with engine simulation.
-- `starparvinai/prefixlens` (GitHub, Sept 2026): a README-only spec (no code yet, 6-week target) for a very similar attribution tool — divergence-position histogram, cache-killer substrings, reordering suggestions, sim-vs-actual reconciler. Also see vLLM PR #48838 (companion to #48369). Do **not** reuse their terminology or name; do not copy their README structure.
-
-Our moat, in priority order: (a) **shipping first** — a working `pip install` with a real validation number beats a spec; (b) multi-engine token-exact simulation validated against a real server; (c) eviction/memory-pressure modeling; (d) lint rules with cause attribution and **auto-fix + before/after replay** (nobody else has the fix step working).
+- **Two engines, modelled separately.** vLLM's block-hash chain and SGLang's
+  token-level radix tree, not one approximation of both. The gap between them is
+  itself a finding: it is the cost of vLLM's block rounding.
+- **Token-exact attribution.** Point at the token where prompts stop agreeing,
+  not the 16-token block. Without that precision a finding cannot quote the
+  value that caused the miss.
+- **Eviction and memory pressure.** Show how the hit rate degrades as the KV
+  budget shrinks, so a user can tell "buy more GPU" apart from "fix your
+  template".
+- **Auto-fix with replay.** Rewrite the log, re-simulate, and report a measured
+  before and after. Suggesting a fix is easy; proving it worked is the hard part.
+- **Validated against a real server**, with the procedure published so anyone can
+  repeat it.
 
 ### Non-goals for v0.1
 
 - No multimodal, LoRA, or cache-salt extra keys (document as roadmap).
 - No scheduler/preemption/arrival-time modeling beyond request order + LRU eviction.
-- No commercial-API usage-field parsing (that's prefixcash's lane).
+- No commercial-API usage-field parsing. OpenAI, Anthropic and Gemini cache
+  with explicit breakpoints, minimum prefix lengths, and TTL expiry rather
+  than an LRU block cache, so the simulators here would give a wrong answer.
 - No GPU required anywhere in the core path.
 
 ---
@@ -290,7 +300,9 @@ Exit codes: 0 ok, 1 error, 2 = findings with severity high (for CI use, `--fail-
 ### M7 — Reports + demo + docs
 - HTML report: before/after bars, divergence-position histogram, hit-rate-vs-KV-budget curve.
 - `kvlint demo` runs end-to-end with zero args and prints the headline number.
-- README: chart first, one-line install (`uvx kvlint demo`), 3-line quickstart, positioning paragraph (vs vLLM CLI / prefixcash — respectful, factual), METHODOLOGY.md (what's simulated, what's estimated, limits), RULES.md.
+- README: chart first, one-line install (`uvx kvlint demo`), 3-line quickstart,
+  a "how it works" and a "when it will not help" section, METHODOLOGY.md
+  (what's simulated, what's estimated, limits), RULES.md.
 - ✅ Fresh clone → `uv run kvlint demo` works on macOS + Linux.
 
 ### M8 — Release
@@ -323,5 +335,5 @@ Exit codes: 0 ok, 1 error, 2 = findings with severity high (for CI use, `--fail-
 
 - One chart image: before/after hit rate, both engines.
 - One sentence with the number. One sentence on what the tool does. Repo link in first comment.
-- Tag vLLM and SGLang. Tagline: "a linter for your prefix cache." Mention it complements `vllm analyze-prefix-cache`.
+- Tag vLLM and SGLang. Tagline: "a linter for your prefix cache."
 - Second post a week later: "validated against a real vLLM server within Z pp — here's how" (METHODOLOGY.md).
