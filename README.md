@@ -101,36 +101,34 @@ Exit codes: `0` clean, `1` error, `2` findings at or above the threshold.
 `--json` writes a deterministic report: same input and config gives byte-identical
 output, so it can be diffed in CI. `--html` needs `pip install 'kvlint[report]'`.
 
-## How it relates to other tools
+## How it works
 
-The space has neighbours, and they are worth knowing about:
-
-- [**`vllm analyze-prefix-cache`**](https://github.com/vllm-project/vllm/pull/48369)
-  (PR, open at time of writing) gives an exact cacheability upper bound for
-  plain-prompt JSONL, with no eviction modelling and no cause classification.
-- [**prefixcash**](https://pypi.org/project/prefixcash/) diagnoses prefix breakage
-  for **commercial APIs** (OpenAI, Anthropic, DeepSeek, Gemini, OpenRouter) using
-  provider usage fields. Different lane: those engines use explicit cache
-  breakpoints, minimum prefix lengths, and TTL expiry, not the LRU block cache
-  kvlint models.
-- [**prefixlens**](https://github.com/starparvinai/prefixlens) is the closest
-  overlap. It also simulates a vLLM-style prefix cache with LRU eviction and can
-  compare against `/metrics`.
-
-What kvlint does that is distinctive today:
-
-- **Two engine models, not one approximation.** vLLM's actual block-hash chain,
-  and SGLang's token-level radix tree, reported side by side. The gap between
-  them is the cost of vLLM's block rounding.
+- **Two engine models, not one approximation.** vLLM's block-hash chain and
+  SGLang's token-level radix tree are simulated separately and reported side by
+  side. The gap between them is the cost of vLLM's block rounding.
+- **Token-exact attribution.** Findings point at the precise token where two
+  prompts stop agreeing, not a 16-token block. That precision is what lets a
+  finding quote the timestamp that caused the miss.
 - **Auto-fix with replay.** kvlint rewrites the log, re-tokenizes, re-simulates,
-  and reports the measured before and after. Suggestions are cheap; the rewrite
-  is the part that is hard to get right, and there is a regression test for the
-  case where relocating a line made the hit rate *worse*.
-- **A validated number.** 0.00 pp against a real server, with the procedure
-  published so you can repeat it.
+  and reports the measured before and after, so the fix is proven rather than
+  suggested. It moves content, never deletes it: the model still sees every value
+  it saw before.
+- **Checked against a real server.** 0.00 pp error on vLLM 0.29.0, with the
+  procedure published so you can repeat it.
 
-If you are on a commercial API rather than self-hosting, prefixcash is the right
-tool and kvlint will not help you.
+## When it will not help
+
+Worth knowing before you install it.
+
+- **Your prompts share nothing.** If requests have no common prefix, caching
+  cannot help and kvlint will say so rather than invent a number.
+- **You use a commercial API.** OpenAI, Anthropic and Gemini cache differently:
+  explicit breakpoints, minimum prefix lengths, and time-based expiry rather than
+  the LRU block cache kvlint models. Pointing it at those logs would produce a
+  confidently wrong answer, so it does not try.
+- **Multimodal, LoRA, or cache salting.** These change how the engine builds its
+  block hashes. Multimodal input is rejected at ingest rather than silently
+  mis-analyzed.
 
 ## Documentation
 
