@@ -221,7 +221,12 @@ __marimo__/
 demo-report.html
 *.report.html
 
-# Local validation notes, not part of the published project.
+# Working notes and planning docs. Not part of the published project, and
+# they would otherwise ship inside the sdist.
+KVLINT_BUILD_PLAN.md
+EXPERIMENTS.md
 docs/VALIDATION.md
+docs/before-after.svg
+scripts/build_readme_chart.py
 sample-log.jsonl
 fixed-log.jsonl
