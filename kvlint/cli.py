@@ -345,10 +345,61 @@ def validate(
         EngineName, typer.Option("--engine", help="Which engine is serving.")
     ] = EngineName.vllm,
     fmt: FormatOpt = LogFormat.openai,
+    block_size: BlockSizeOpt = 16,
+    reset_cache: Annotated[
+        bool,
+        typer.Option(
+            "--reset-cache/--no-reset-cache",
+            help="Clear the server prefix cache before replaying.",
+        ),
+    ] = True,
     verbose: VerboseOpt = False,
 ) -> None:
     """Replay a log against a live server and compare simulated vs real hit rate."""
-    _not_yet("validate", "M6")
+    from kvlint.errors import KvlintError
+    from kvlint.ingest import load as load_log
+    from kvlint.live.replay import build_client
+    from kvlint.live.validate import validate_sglang, validate_vllm
+    from kvlint.report.terminal import print_validation
+    from kvlint.tokenize.renderer import tokenize_requests
+
+    try:
+        requests = load_log(logs, fmt.value)
+        tokenized = tokenize_requests(model, requests)
+    except KvlintError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(ExitCode.ERROR) from exc
+
+    console.print(
+        f"Replaying [bold]{len(requests)}[/] requests against [bold]{server}[/] "
+        f"({engine.value}, model {model})"
+    )
+    console.print()
+
+    try:
+        client = build_client(server)
+        with client:
+            if engine is EngineName.vllm:
+                result = validate_vllm(
+                    client, requests, tokenized, model, block_size, reset_cache=reset_cache
+                )
+            else:
+                result = validate_sglang(
+                    client, requests, tokenized, model, reset_cache=reset_cache
+                )
+    except KvlintError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(ExitCode.ERROR) from exc
+    except Exception as exc:
+        err_console.print(f"[red]could not reach {server}: {exc}[/]")
+        raise typer.Exit(ExitCode.ERROR) from exc
+
+    print_validation(console, result)
+
+    # A token mismatch means our rendering differs from the server's, which makes
+    # every hit rate suspect. That is a failure, not a note.
+    if not result.tokens_agree or result.within_tolerance is False:
+        raise typer.Exit(ExitCode.FINDINGS)
 
 
 @app.command()
