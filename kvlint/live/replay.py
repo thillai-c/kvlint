@@ -72,6 +72,23 @@ def _payload(request: Request, model: str) -> tuple[str, dict[str, Any]]:
     return "/v1/chat/completions", body
 
 
+def reset_prefix_cache(client: Any) -> bool:
+    """Ask the server to drop its prefix cache. True when it obliged.
+
+    A warm cache from earlier traffic would credit us with hits our log did not
+    earn, so a cold start is what makes the comparison meaningful. Not every
+    engine or version exposes this, hence the boolean rather than an exception.
+    """
+    for endpoint in ("/reset_prefix_cache", "/v1/reset_prefix_cache"):
+        try:
+            response = client.post(endpoint)
+        except Exception:  # pragma: no cover - network shapes vary
+            continue
+        if response.status_code < 400:
+            return True
+    return False
+
+
 def replay(
     client: Any,
     requests: list[Request],
