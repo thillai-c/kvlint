@@ -10,8 +10,19 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{ name = "Thillai Muthukumar" }]
-keywords = ["llm", "vllm", "sglang", "kv-cache", "prefix-cache", "inference", "linter"]
+authors = [{ name = "Thillai Chithambaram", email = "thillaichithambaram.a@gmail.com" }]
+keywords = [
+    "llm",
+    "vllm",
+    "sglang",
+    "kv-cache",
+    "prefix-cache",
+    "prefix-caching",
+    "inference",
+    "linter",
+    "llm-serving",
+    "prompt-engineering",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -41,8 +52,11 @@ live = ["httpx>=0.27"]
 kvlint = "kvlint.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/tmuthukumar/kvlint"
-Repository = "https://github.com/tmuthukumar/kvlint"
+Homepage = "https://github.com/thillai-c/kvlint"
+Repository = "https://github.com/thillai-c/kvlint"
+Issues = "https://github.com/thillai-c/kvlint/issues"
+Changelog = "https://github.com/thillai-c/kvlint/blob/main/CHANGELOG.md"
+Methodology = "https://github.com/thillai-c/kvlint/blob/main/docs/METHODOLOGY.md"
 
 [dependency-groups]
 dev = [
