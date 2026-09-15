@@ -132,8 +132,14 @@ def _budget_figure(go: Any, curve: list[tuple[int, float]]) -> Any | None:
             )
         ]
     )
+    knee = next(
+        (blocks for blocks, rate in curve if rate >= max(r for _, r in curve) * 0.95),
+        None,
+    )
+    subtitle = f"<br><sub>Reaches its ceiling at about {knee:,} blocks</sub>" if knee else ""
+
     figure.update_layout(
-        title="Hit rate against KV budget (vLLM)",
+        title=f"Hit rate against KV budget (vLLM){subtitle}",
         xaxis_title="KV budget (blocks)",
         yaxis_title="Hit rate (%)",
         yaxis_range=[0, 100],
