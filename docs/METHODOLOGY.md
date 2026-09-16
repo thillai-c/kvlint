@@ -3,7 +3,8 @@
 What kvlint measures, what it models, what it estimates, and where it is wrong.
 
 The short version: **hit rates are simulated, TTFT and cost are estimated, and
-the vLLM simulator has been checked against a real server once.** Everything
+the vLLM simulator has been checked against a real server across 10,300
+requests.** Everything
 below explains which is which, so you can decide how much weight to put on any
 particular number.
 
@@ -112,51 +113,81 @@ makes on your behalf.
 
 ## Validation
 
-Run on 2026-09-14 against vLLM 0.29.0 on an RTX 4070 Laptop under WSL2, with
-Qwen2.5-0.5B-Instruct and 50 requests:
+Measured against a live vLLM 0.29.0 server on an RTX 4070 Laptop (8 GiB) under
+WSL2, 2026-09-15. Every row is an actual run.
 
-| | Value |
-|---|---|
-| kvlint simulation | 84.0% |
-| vLLM server | 84.0% |
-| Absolute error | **0.00 pp** |
-| Token counts | matched, 50 of 50 |
+| # | Workload | Requests | kvlint | vLLM | Error | Tokens |
+|---|---|---|---|---|---|---|
+| E1a | 400 tenants, Zipf, bounded KV | 1,500 | 77.0% | 77.0% | **0.00 pp** | 1500/1500 |
+| E1b | 1,500 tenants, Zipf, bounded KV | 1,500 | 59.9% | 59.9% | **0.00 pp** | 1500/1500 |
+| E1c | 2,500 tenants, Zipf, bounded KV | 2,500 | 56.1% | 56.1% | **0.00 pp** | 2500/2500 |
+| E1d | 4,000 tenants, Zipf, bounded KV | 4,000 | 52.5% | 52.5% | **0.00 pp** | 4000/4000 |
+| E2 | Multi-turn, ShareGPT, 6 turns | 300 | 74.3% | 74.3% | **0.00 pp** | 300/300 |
+| E3 | Tool schemas | 200 | 95.9% | 95.9% | **0.00 pp** | 200/200 |
+| E4 | TinyLlama-1.1B, multi-turn | 300 | 74.7% | 74.7% | **0.00 pp** | 300/300 |
 
-An exact match is the *expected* outcome for a correct simulator rather than a
-lucky one. Prefix caching is deterministic: with a cold cache, sequential
-requests and no memory pressure, the cached-token count is fully determined by
-the block-hash chain. A gap would have meant a real defect.
+**10,300 requests, exact agreement on all seven, 10,300/10,300 token counts
+matched.**
 
-Reproduce it by replaying a log against a local `vllm serve` with
-`kvlint validate`, which reports the absolute error and cross-checks token
-counts on every run.
+### The eviction result specifically
 
-### What that run does not cover
+E1 ran against a server with a **bounded** 8,774-block KV cache (1.61 GiB,
+140,384 tokens), and the workloads were sized to overflow it. The four rows sit
+progressively further below their own unbounded ceilings:
 
-The conditions that made the match exact also make it a soft test. Still
-unvalidated against a real server:
+| Workload | Unbounded | Bounded, measured | Cost of eviction |
+|---|---|---|---|
+| E1a | 78.8% | 77.0% | 1.8 pp |
+| E1b | 65.5% | 59.9% | 5.6 pp |
+| E1c | 66.5% | 56.1% | 10.4 pp |
+| E1d | 67.8% | 52.5% | 15.3 pp |
 
-- **Eviction under memory pressure.** The server had a large KV cache and never
-  evicted, so the LRU model was never exercised. This remains simulation-only.
-- **Multi-turn growth**, where each request extends the previous one.
-- **Tool schemas**, since no request in the log carried `tools`.
-- **SGLang**, not yet run. It is also structurally weaker to validate: SGLang
-  exposes `sglang:cache_hit_rate` as a **gauge** covering the server's whole
-  history, while vLLM exposes **counters** that can be differenced across the
-  replay window to isolate exactly our traffic.
+Agreement across a **rising** eviction cost is what validates the LRU model. A
+single match could be coincidence; matching while the eviction penalty grows
+from 1.8 to 15.3 pp means the model tracks real memory pressure.
 
-### Does a 0.5B model generalize?
+An earlier attempt at this did *not* test eviction, despite also scoring 0.00 pp:
+the workload was 7,200 blocks against an 8,774-block cache, so nothing was ever
+evicted. Getting a correct number from a test that exercises nothing is the easy
+failure mode here.
 
-Yes, and for a reason that is easy to check rather than take on trust. Prefix
-caching is a function of token ids and block boundaries; nothing in it touches
-parameter count. Qwen2.5-0.5B-Instruct and Qwen2.5-7B-Instruct have identical
-vocabularies and byte-identical chat templates, asserted in
+### Warm cache is the main hazard
+
+During E1, running workload B immediately after A gave 64.7% against a simulated
+59.9%. Restarting the server and rerunning B in isolation gave 59.9% against
+59.9%. **Contamination from a previous run produced a 4.8 pp error, larger than
+the 3 pp tolerance**, and it inflates the real rate so the result looks
+plausible while being wrong.
+
+The cause: vLLM only registers `/reset_prefix_cache` when started with
+`VLLM_SERVER_DEV_MODE=1`. Without it the endpoint 404s and kvlint's automatic
+reset cannot work. `kvlint validate` now says so prominently before reporting
+any number.
+
+### Still not validated
+
+- **SGLang.** Blocked by a CUDA/DeepEP environment issue on the test machine.
+  It is also structurally weaker to validate: SGLang exposes
+  `sglang:cache_hit_rate` as a **gauge** covering the server's whole history,
+  while vLLM exposes **counters** that can be differenced across the replay
+  window to isolate exactly our traffic.
+- **Preemption under extreme pressure.** All eviction testing used a cache large
+  enough that vLLM evicted rather than preempting. Under harder pressure vLLM
+  recomputes, which kvlint does not model.
+- **Larger models.** Tested on 0.5B and 1.1B. Model size does not affect prefix
+  caching (see below), but no run has confirmed that on a 7B+ server.
+
+### Does a small model generalize?
+
+Yes, and it is checkable rather than a matter of trust. Prefix caching is a
+function of token ids and block boundaries; nothing in it touches parameter
+count. Qwen2.5-0.5B-Instruct and Qwen2.5-7B-Instruct have identical vocabularies
+and byte-identical chat templates, asserted in
 `test_model_size_does_not_change_the_tokenizer`.
 
 What varies between models is the **family**, because that changes the tokenizer
-and the template. Rendering is checked across four families in CI.
-
----
+and the template. Rendering is checked across four families in CI, and two
+families have now been checked against a live server (Qwen2.5 and TinyLlama).
 
 ## Known limitations
 

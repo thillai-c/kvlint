@@ -230,3 +230,4 @@ docs/before-after.svg
 scripts/build_readme_chart.py
 sample-log.jsonl
 fixed-log.jsonl
+kvlint_experiment_results.md

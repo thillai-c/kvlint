@@ -84,26 +84,29 @@ Eight rules, each with a positive and a negative test. Full reference in
 
 ## Validated against a real server
 
-The vLLM simulator has been checked against a live vLLM server, not just against
-itself:
+Not against itself. Against a live vLLM 0.29.0 server, 10,300 requests, exact
+agreement on every run:
 
-| Source | Hit rate |
-|---|---|
-| kvlint simulation | 84.0% |
-| vLLM 0.29.0 server | 84.0% |
-| Absolute error | **0.00 pp** |
-| Token counts | matched, 50 of 50 |
+| Workload | Requests | kvlint | vLLM | Error |
+|---|---|---|---|---|
+| Multi-tenant, bounded KV cache | 9,500 | matched | matched | **0.00 pp** |
+| Multi-turn conversations | 300 | 74.3% | 74.3% | **0.00 pp** |
+| Tool schemas | 200 | 95.9% | 95.9% | **0.00 pp** |
+| Second model family (TinyLlama) | 300 | 74.7% | 74.7% | **0.00 pp** |
 
-The token-count check matters more than the hit rate. It proves kvlint renders
-the chat template to the same bytes the server prefills, which is the foundation
-everything else rests on. `kvlint validate` performs both checks on every run and
-exits non-zero if either fails.
+**Token counts matched on all 10,300 requests**, which matters more than the hit
+rate: it proves kvlint renders the chat template to the same bytes the server
+prefills. `kvlint validate` checks both on every run and exits non-zero if
+either fails.
 
-`kvlint validate` reproduces this against your own server.
+The eviction model was tested against a deliberately undersized 8,774-block
+cache, with workloads scaled so the cost of eviction rose from 1.8 to 15.3
+percentage points. Agreement held across the whole range.
 
-**Eviction under memory pressure, multi-turn logs, tool schemas, and SGLang are
-not yet validated against a real server**, and
-[METHODOLOGY.md](https://github.com/thillai-c/kvlint/blob/main/docs/METHODOLOGY.md) says so rather than glossing over it.
+Not yet validated: **SGLang against a live server**, and **preemption under
+extreme memory pressure**.
+[METHODOLOGY.md](https://github.com/thillai-c/kvlint/blob/main/docs/METHODOLOGY.md)
+says so rather than glossing over it.
 
 ## Use it in CI
 
@@ -139,8 +142,9 @@ output, so it can be diffed in CI. `--html` needs `pip install 'kvlint[report]'`
   and reports the measured before and after, so the fix is proven rather than
   suggested. It moves content, never deletes it: the model still sees every value
   it saw before.
-- **Checked against a real server.** 0.00 pp error on vLLM 0.29.0, with the
-  procedure published so you can repeat it.
+- **Checked against a real server.** 0.00 pp error across 10,300 requests on
+  vLLM 0.29.0, covering bounded caches, multi-turn, tool schemas and two model
+  families.
 
 ## When it will not help
 
