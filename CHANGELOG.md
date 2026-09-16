@@ -4,6 +4,44 @@ Notable changes to kvlint. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [semantic versioning](https://semver.org/).
 
+## [0.1.1]
+
+Documentation and packaging. No behaviour change to the simulators or rules.
+
+### Fixed
+
+- **Source distributions no longer carry working notes.** The sdist defaulted to
+  everything git tracked, so an internal planning document shipped inside
+  0.1.0. Sdist contents are now listed explicitly.
+- **`kvlint validate` warns prominently when the prefix cache was not reset.**
+  vLLM only registers `/reset_prefix_cache` when started with
+  `VLLM_SERVER_DEV_MODE=1`, so the automatic reset silently does nothing
+  otherwise. A warm cache inflates the measured hit rate: during validation it
+  produced a 4.8 pp error, larger than the 3 pp tolerance, which reads as a
+  simulator fault rather than contamination. The warning now appears before the
+  numbers instead of after them.
+- **Correct author and repository metadata.** The PyPI project links pointed at
+  a repository path that did not exist.
+- **README rendering.** Absolute URLs so links and badges resolve on PyPI as
+  well as GitHub, and the example output is now captured from a real run rather
+  than written by hand.
+
+### Added
+
+- `kvlint validate --kv-budget-blocks` and `--kv-budget-tokens`, so the
+  simulation can be run against the server's actual KV capacity. Without this
+  the simulator always assumed an unbounded cache, which made it impossible to
+  validate eviction against a server small enough to evict.
+
+### Validated
+
+Live validation extended from 50 requests to **10,300**, across bounded KV
+caches, multi-turn conversations, tool schemas and a second model family. Exact
+agreement on every workload. See the 0.1.0 notes below and
+[docs/METHODOLOGY.md](https://github.com/thillai-c/kvlint/blob/main/docs/METHODOLOGY.md).
+
+---
+
 ## [0.1.0]
 
 First public release.
