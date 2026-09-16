@@ -4,7 +4,7 @@ Analyzes real LLM request logs offline (no GPU, no model weights) to estimate
 prefix-cache hit rate on vLLM and SGLang, explain why the cache misses, and
 show the before/after of applying fixes.
 
-See KVLINT_BUILD_PLAN.md for the full specification.
+See docs/METHODOLOGY.md for what is measured, simulated and estimated.
 """
 
 __version__ = "0.1.0"
