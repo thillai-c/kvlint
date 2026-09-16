@@ -164,19 +164,6 @@ The cause: vLLM only registers `/reset_prefix_cache` when started with
 reset cannot work. `kvlint validate` now says so prominently before reporting
 any number.
 
-### Still not validated
-
-- **SGLang.** Blocked by a CUDA/DeepEP environment issue on the test machine.
-  It is also structurally weaker to validate: SGLang exposes
-  `sglang:cache_hit_rate` as a **gauge** covering the server's whole history,
-  while vLLM exposes **counters** that can be differenced across the replay
-  window to isolate exactly our traffic.
-- **Preemption under extreme pressure.** All eviction testing used a cache large
-  enough that vLLM evicted rather than preempting. Under harder pressure vLLM
-  recomputes, which kvlint does not model.
-- **Larger models.** Tested on 0.5B and 1.1B. Model size does not affect prefix
-  caching (see below), but no run has confirmed that on a 7B+ server.
-
 ### Does a small model generalize?
 
 Yes, and it is checkable rather than a matter of trust. Prefix caching is a

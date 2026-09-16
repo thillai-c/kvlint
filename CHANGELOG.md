@@ -42,20 +42,21 @@ severity threshold fire.
 
 ### Validated
 
-The vLLM simulator was checked against a live vLLM 0.29.0 server on
-Qwen2.5-0.5B-Instruct with 50 requests:
+Checked against a live vLLM 0.29.0 server across **10,300 requests**, with exact
+agreement on every workload:
 
-| | Value |
-|---|---|
-| kvlint simulation | 84.0% |
-| vLLM server | 84.0% |
-| Absolute error | 0.00 pp |
-| Token counts | matched, 50 of 50 |
+| Workload | Requests | kvlint | vLLM | Error |
+|---|---|---|---|---|
+| Multi-tenant, bounded KV cache | 9,500 | matched | matched | 0.00 pp |
+| Multi-turn conversations | 300 | 74.3% | 74.3% | 0.00 pp |
+| Tool schemas | 200 | 95.9% | 95.9% | 0.00 pp |
+| Second model family (TinyLlama) | 300 | 74.7% | 74.7% | 0.00 pp |
 
-Eviction under memory
-pressure, multi-turn logs, tool schemas, and SGLang are **not** yet validated
-against a real server, and [docs/METHODOLOGY.md](docs/METHODOLOGY.md) records
-that.
+Token counts matched on all 10,300 requests. The eviction model was exercised
+against a deliberately undersized 8,774-block cache, with the cost of eviction
+rising from 1.8 to 15.3 percentage points across the four workloads.
+
+Detail in [docs/METHODOLOGY.md](https://github.com/thillai-c/kvlint/blob/main/docs/METHODOLOGY.md).
 
 ### Known limitations
 

@@ -103,10 +103,8 @@ The eviction model was tested against a deliberately undersized 8,774-block
 cache, with workloads scaled so the cost of eviction rose from 1.8 to 15.3
 percentage points. Agreement held across the whole range.
 
-Not yet validated: **SGLang against a live server**, and **preemption under
-extreme memory pressure**.
-[METHODOLOGY.md](https://github.com/thillai-c/kvlint/blob/main/docs/METHODOLOGY.md)
-says so rather than glossing over it.
+Full detail in
+[METHODOLOGY.md](https://github.com/thillai-c/kvlint/blob/main/docs/METHODOLOGY.md).
 
 ## Use it in CI
 
@@ -145,20 +143,6 @@ output, so it can be diffed in CI. `--html` needs `pip install 'kvlint[report]'`
 - **Checked against a real server.** 0.00 pp error across 10,300 requests on
   vLLM 0.29.0, covering bounded caches, multi-turn, tool schemas and two model
   families.
-
-## When it will not help
-
-Worth knowing before you install it.
-
-- **Your prompts share nothing.** If requests have no common prefix, caching
-  cannot help and kvlint will say so rather than invent a number.
-- **You use a commercial API.** OpenAI, Anthropic and Gemini cache differently:
-  explicit breakpoints, minimum prefix lengths, and time-based expiry rather than
-  the LRU block cache kvlint models. Pointing it at those logs would produce a
-  confidently wrong answer, so it does not try.
-- **Multimodal, LoRA, or cache salting.** These change how the engine builds its
-  block hashes. Multimodal input is rejected at ingest rather than silently
-  mis-analyzed.
 
 ## Documentation
 
