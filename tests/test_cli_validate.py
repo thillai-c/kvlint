@@ -147,3 +147,39 @@ def test_validate_rejects_a_missing_log(tmp_path: Path) -> None:
     )
     assert result.exit_code == ExitCode.ERROR
     assert "file not found" in result.output
+
+
+def test_an_unreset_cache_is_warned_about_before_the_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A warm cache inflates the real rate, so the run looks plausible but is wrong.
+
+    Regression: a real validation run hit this. vLLM only registers
+    /reset_prefix_cache when started with VLLM_SERVER_DEV_MODE=1, so by default
+    the reset 404s. The measured error from contamination was 4.8 pp, larger
+    than the 3 pp tolerance, which would read as a simulator bug.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/metrics":
+            return httpx.Response(
+                200,
+                text=("vllm:prefix_cache_queries_total 100\nvllm:prefix_cache_hits_total 50\n"),
+            )
+        if "reset" in request.url.path:
+            return httpx.Response(404)  # what vLLM does without dev mode
+        return httpx.Response(200, json={"usage": {"prompt_tokens": 32}})
+
+    monkeypatch.setattr(
+        "kvlint.live.replay.build_client",
+        lambda base_url, timeout=120.0: httpx.Client(
+            base_url="http://fake", transport=httpx.MockTransport(handler)
+        ),
+    )
+
+    log = write_log(tmp_path / "log.jsonl")
+    result = runner.invoke(app, ["validate", str(log), "--model", MODEL, "--server", "http://f"])
+    flat = re.sub(r"\s+", " ", result.output)
+
+    assert "NOT reset" in flat
+    assert "VLLM_SERVER_DEV_MODE=1" in flat

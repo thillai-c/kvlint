@@ -197,6 +197,16 @@ def print_validation(console: Console, result: object) -> None:
     console.print(table)
     console.print()
 
+    if not result.cache_was_reset:
+        # A warm cache is the single most common cause of a bogus comparison, and
+        # it inflates the real rate rather than depressing it, so the run looks
+        # plausible while being wrong. Say so before the number, not after.
+        console.print(
+            "[yellow]The prefix cache was NOT reset before this replay, so the "
+            "server number may include earlier traffic.[/]"
+        )
+        console.print()
+
     error = result.abs_error_pp
     if error is None:
         console.print("[yellow]No real hit rate to compare against.[/]")

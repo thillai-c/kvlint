@@ -70,7 +70,11 @@ def validate_vllm(
     was_reset = reset_prefix_cache(client) if reset_cache else False
     if reset_cache and not was_reset:
         notes.append(
-            "could not reset the prefix cache, so earlier traffic may inflate the real hit rate"
+            "COULD NOT RESET THE PREFIX CACHE. Anything the server has already "
+            "served will inflate the real hit rate, and the error that causes is "
+            "easily larger than the 3 pp tolerance. vLLM only exposes "
+            "/reset_prefix_cache when started with VLLM_SERVER_DEV_MODE=1; "
+            "otherwise restart the server between runs."
         )
 
     before = vllm_metrics.scrape(client)
@@ -117,7 +121,10 @@ def validate_sglang(
 
     was_reset = reset_prefix_cache(client) if reset_cache else False
     if reset_cache and not was_reset:
-        notes.append("could not reset the prefix cache before replaying")
+        notes.append(
+            "COULD NOT RESET THE PREFIX CACHE. Restart the server between runs, "
+            "or start it with VLLM_SERVER_DEV_MODE=1 so /reset_prefix_cache exists."
+        )
 
     outcome = replay(client, requests, tokenized, model)
     real = sglang_metrics.scrape_hit_rate(client)
